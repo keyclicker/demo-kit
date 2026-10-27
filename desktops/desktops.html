@@ -50,6 +50,22 @@
         margin-left: auto;
       }
 
+      nav button {
+        padding: 2px 12px;
+        color: #999999;
+        font: inherit;
+        font-weight: 500;
+        background: none;
+        border: 0;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+
+      nav button[aria-pressed="true"] {
+        color: #ffffff;
+        background: #3a3a3a;
+      }
+
       iframe {
         flex: 1;
         width: 100%;
@@ -70,7 +86,9 @@
          explicit, so noVNC's saved toggle never leaks across them.
          For real work on :0, use Moonlight. -->
     <nav>
-      <a class="end" id="sunshine" href="#">sunshine</a>
+      <button class="end" id="sound" aria-pressed="false"
+              title=":0's sound (desktop-speaker), streamed by deskaudio">🔇 sound</button>
+      <a id="sunshine" href="#">sunshine</a>
     </nav>
 
     <script>
@@ -174,6 +192,123 @@
           // hub unreachable: keep the tabs we have
         }
       }
+
+      // ---- :0 sound -------------------------------------------------
+      // VNC has no audio. deskaudio streams :0's desktop-speaker sink
+      // as raw s16le PCM; a worklet plays it, holding ~80 ms of buffer.
+
+      const worklet = `
+        class Pcm extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this.queue = [];   // interleaved stereo Float32Arrays
+            this.offset = 0;   // frames consumed of queue[0]
+            this.frames = 0;   // frames buffered
+            this.playing = false;
+            this.port.onmessage = (e) => this.push(e.data);
+          }
+
+          // Queue a chunk; past 250 ms of lag, skip back to 80 ms.
+          push(chunk) {
+            this.queue.push(chunk);
+            this.frames += chunk.length / 2;
+            if (this.frames < sampleRate * 0.25) return;
+
+            while (this.frames > sampleRate * 0.08 && this.queue.length > 1) {
+              this.frames -= this.queue.shift().length / 2 - this.offset;
+              this.offset = 0;
+            }
+          }
+
+          process(_, [[left, right]]) {
+            // After an underrun, wait for 40 ms so playback doesn't crackle
+            if (!this.playing && this.frames >= sampleRate * 0.04) this.playing = true;
+
+            for (let i = 0; i < left.length; i++) {
+              if (!this.playing || this.frames === 0) {
+                left[i] = right[i] = 0;
+                this.playing = false;
+                continue;
+              }
+
+              const chunk = this.queue[0];
+              left[i] = chunk[this.offset * 2];
+              right[i] = chunk[this.offset * 2 + 1];
+              this.frames--;
+
+              if (++this.offset * 2 >= chunk.length) {
+                this.queue.shift();
+                this.offset = 0;
+              }
+            }
+            return true;
+          }
+        }
+        registerProcessor("pcm", Pcm);
+      `;
+
+      const soundButton = document.getElementById("sound");
+      let sound = null; // { ctx, abort } while on
+
+      // Pipe the stream into the worklet until aborted; reconnect on drops.
+      async function pump(node, signal) {
+        while (!signal.aborted) {
+          try {
+            const res = await fetch("/desktop-audio/stream", { signal, cache: "no-store" });
+            const reader = res.body.getReader();
+            let rest = new Uint8Array(0); // bytes of a split sample
+
+            for (;;) {
+              const { value, done } = await reader.read();
+              if (done) break;
+
+              const bytes = new Uint8Array(rest.length + value.length);
+              bytes.set(rest);
+              bytes.set(value, rest.length);
+
+              const whole = bytes.length - (bytes.length % 4); // full frames
+              rest = bytes.slice(whole);
+
+              const pcm = new Int16Array(bytes.buffer, 0, whole / 2);
+              const out = new Float32Array(pcm.length);
+              for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] / 32768;
+              node.port.postMessage(out, [out.buffer]);
+            }
+          } catch {
+            // aborted, or deskaudio unreachable: retry below
+          }
+          if (!signal.aborted) await new Promise((r) => setTimeout(r, 1000));
+        }
+      }
+
+      async function startSound() {
+        const ctx = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
+        const url = URL.createObjectURL(new Blob([worklet], { type: "text/javascript" }));
+        await ctx.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
+
+        const node = new AudioWorkletNode(ctx, "pcm", { outputChannelCount: [2] });
+        node.connect(ctx.destination);
+
+        const abort = new AbortController();
+        sound = { ctx, abort };
+        pump(node, abort.signal);
+      }
+
+      function stopSound() {
+        sound.abort.abort();
+        sound.ctx.close();
+        sound = null;
+      }
+
+      // Browsers only start audio from a click, so sound is never on at load
+      soundButton.addEventListener("click", async () => {
+        if (sound) stopSound();
+        else await startSound();
+
+        soundButton.setAttribute("aria-pressed", String(!!sound));
+        soundButton.textContent = sound ? "🔊 sound" : "🔇 sound";
+      });
 
       addEventListener("hashchange", show);
 
