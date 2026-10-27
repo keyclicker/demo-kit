@@ -2,14 +2,17 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -28,6 +31,37 @@ func recordingPath(n int) (string, error) {
 	return filepath.Join(home, recordDir, name), nil
 }
 
+// recordingURL is where the tailnet reaches a video in ~/public: hub
+// serves that dir at /files/. Empty if tailscale can't name this node.
+func recordingURL(video string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	rel, err := filepath.Rel(filepath.Join(home, "public"), video)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+
+	out, err := exec.Command("tailscale", "status", "--json").Output()
+	if err != nil {
+		return ""
+	}
+
+	var status struct{ Self struct{ DNSName string } }
+	if json.Unmarshal(out, &status) != nil || status.Self.DNSName == "" {
+		return ""
+	}
+
+	u := url.URL{
+		Scheme: "https",
+		Host:   strings.TrimSuffix(status.Self.DNSName, "."),
+		Path:   "/files/" + filepath.ToSlash(rel),
+	}
+	return u.String()
+}
+
 // ---- Recording ----
 
 // startRecording grabs display n into path with ffmpeg until
@@ -37,12 +71,16 @@ func startRecording(n int, path string, env []string) (*exec.Cmd, error) {
 		return nil, err
 	}
 
+	// Encode on the 890M (VAAPI), color conversion included: ~4% of a
+	// core at 30 fps, vs ~50% for libx264 veryfast
 	ffmpeg := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
-		"-f", "x11grab", "-framerate", "10", "-i", ":"+strconv.Itoa(n),
+		"-vaapi_device", renderNode,
+		"-f", "x11grab", "-framerate", "30", "-i", ":"+strconv.Itoa(n),
 
-		// yuv420p plays everywhere but needs even sides
-		"-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-		"-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+		// nv12 (yuv420p) plays everywhere but needs even sides
+		"-vf", "hwupload,"+
+			"scale_vaapi=w=trunc(iw/2)*2:h=trunc(ih/2)*2:format=nv12",
+		"-c:v", "h264_vaapi", "-qp", "28",
 		"-movflags", "+faststart", path)
 	ffmpeg.Env = env
 	ffmpeg.Stderr = os.Stderr

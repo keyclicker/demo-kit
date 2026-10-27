@@ -19,7 +19,7 @@ const usageText = `desk: disposable X displays for agents
   desk new [-size WxH]           start a recorded desktop, print :N
   desk ls [-json]                list desktops and their owners
   desk rm [-force] :N... | -all  stop your desktops (-force: anyone's),
-                                 print their finished videos
+                                 print their finished videos (path, URL)
 
   desk claim [-force] [:0]       take the user's :0 for yourself
   desk release [:0]              give it back
