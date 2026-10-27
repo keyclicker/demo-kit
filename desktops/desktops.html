@@ -61,6 +61,11 @@
         cursor: pointer;
       }
 
+      nav button:disabled {
+        color: #555555;
+        cursor: default;
+      }
+
       nav button[aria-pressed="true"] {
         color: #ffffff;
         background: #3a3a3a;
@@ -86,7 +91,8 @@
          explicit, so noVNC's saved toggle never leaks across them.
          For real work on :0, use Moonlight. -->
     <nav>
-      <button class="end" id="sound" aria-pressed="false"
+      <button class="end" id="control" aria-pressed="false">🖱 control</button>
+      <button id="sound" aria-pressed="false"
               title=":0's sound (desktop-speaker), streamed by deskaudio">🔇 sound</button>
       <a id="sunshine" href="#">sunshine</a>
     </nav>
@@ -122,10 +128,13 @@
 
         // Keep tabs sorted by display number
         const next = [...desks.keys()].find((t) => Number(t) > Number(desk.token));
-        nav.insertBefore(tab, next ? desks.get(next).tab : sunshine);
+        nav.insertBefore(tab, next ? desks.get(next).tab : controlButton);
         document.body.append(frame);
 
-        desks.set(desk.token, { tab, frame });
+        // :0 takes input by default; agent desktops ignore it anyway
+        const entry = { tab, frame, viewOnly: desk.viewOnly, control: !desk.viewOnly };
+        frame.addEventListener("load", () => applyControl(entry));
+        desks.set(desk.token, entry);
       }
 
       // Owner on hover: an agent desktop's creator, or the agent that
@@ -176,13 +185,52 @@
         for (const [token, { tab, frame }] of desks) {
           frame.hidden = token !== name;
           if (token === name) {
+            current = token;
             tab.setAttribute("aria-current", "true");
           } else {
             tab.removeAttribute("aria-current");
           }
         }
         desks.get(name).frame.focus();
+        renderControl();
       }
+
+      // ---- control (view-only) toggle ---------------------------------
+      // noVNC's own toggle hides in its sidebar. Frames share our origin,
+      // so flip its checkbox directly: live, no reconnect. Agent desktops'
+      // Xvnc ignores VNC input (-Accept*=0), so their toggle stays off.
+
+      const controlButton = document.getElementById("control");
+      let current = null; // token of the shown desktop
+
+      // Push an entry's control state into its noVNC frame.
+      function applyControl(entry) {
+        const box = entry.frame.contentDocument?.getElementById("noVNC_setting_view_only");
+        if (!box || box.checked === !entry.control) return;
+
+        box.checked = !entry.control;
+        box.dispatchEvent(new Event("change"));
+      }
+
+      function renderControl() {
+        const entry = desks.get(current);
+        if (!entry) return;
+
+        controlButton.disabled = entry.viewOnly;
+        controlButton.title = entry.viewOnly
+          ? "agent desktop: its VNC ignores input"
+          : "send mouse and keyboard to this desktop";
+        controlButton.setAttribute("aria-pressed", String(entry.control));
+        controlButton.textContent = entry.control ? "🖱 control" : "👁 view only";
+      }
+
+      controlButton.addEventListener("click", () => {
+        const entry = desks.get(current);
+        entry.control = !entry.control;
+        applyControl(entry);
+        renderControl();
+        entry.frame.focus();
+      });
 
       async function poll() {
         try {
