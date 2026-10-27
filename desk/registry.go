@@ -279,8 +279,14 @@ func cmdRemove(args []string) error {
 	}
 
 	for _, n := range targets {
-		if video := owned[n].Recording; video != "" {
-			fmt.Printf(":%d recording: %s\n", n, video)
+		video := owned[n].Recording
+		if video == "" {
+			continue
+		}
+
+		fmt.Printf(":%d recording: %s\n", n, video)
+		if u := recordingURL(video); u != "" {
+			fmt.Printf(":%d url: %s\n", n, u)
 		}
 	}
 
