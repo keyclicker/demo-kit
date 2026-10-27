@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>demo-kit desktops</title>
+    <style>
+      /* Always dark: it frames desktops, not a page. */
+      :root {
+        color-scheme: dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #e5e5e5;
+        background: #1a1a1a;
+        font-size: 13px;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+
+      nav {
+        display: flex;
+        gap: 4px;
+        padding: 2px 8px;
+        background: #242424;
+        border-bottom: 1px solid #333333;
+      }
+
+      nav a {
+        padding: 2px 12px;
+        color: #999999;
+        font-weight: 500;
+        text-decoration: none;
+        border-radius: 6px;
+      }
+
+      nav a[aria-current] {
+        color: #ffffff;
+        background: #3a3a3a;
+      }
+
+      nav .end {
+        margin-left: auto;
+      }
+
+      iframe {
+        flex: 1;
+        width: 100%;
+        border: 0;
+      }
+
+      iframe[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- One live noVNC per desktop (tokens in /etc/novnc/tokens); the
+         tabs only toggle which one shows, so switching never reconnects.
+         Desktops open interactive (noVNC's panel toggles view-only);
+         `view_only` is explicit, so the toggle never leaks across them
+         via noVNC's saved settings. For real work, use Moonlight. -->
+    <nav>
+      <a href="#main">Main · 0</a>
+      <a class="end" id="sunshine" href="#">sunshine</a>
+    </nav>
+    <iframe id="main" title="Main desktop :0"
+      src="desktop/vnc.html?autoconnect=true&amp;reconnect=true&amp;resize=scale&amp;view_only=false&amp;path=desktop/websockify%3Ftoken%3D0"></iframe>
+
+    <script>
+      // Sunshine's web UI, proxied by tailscale serve for a valid cert.
+      document.getElementById("sunshine").href =
+        `https://${location.hostname}:47991/`;
+
+      // Show the desktop named by the hash, else the first one.
+      function show() {
+        const frames = [...document.querySelectorAll("iframe")];
+        const wanted = location.hash.slice(1);
+        const name = frames.some((f) => f.id === wanted) ? wanted : frames[0].id;
+
+        for (const frame of frames) {
+          frame.hidden = frame.id !== name;
+        }
+        for (const tab of document.querySelectorAll("nav a[href^='#']")) {
+          if (tab.hash === "#" + name) {
+            tab.setAttribute("aria-current", "true");
+          } else {
+            tab.removeAttribute("aria-current");
+          }
+        }
+        document.getElementById(name).focus();
+      }
+
+      addEventListener("hashchange", show);
+      show();
+    </script>
+  </body>
+</html>
