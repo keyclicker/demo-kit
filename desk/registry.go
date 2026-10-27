@@ -104,7 +104,7 @@ func cmdNew(args []string) error {
 	}
 
 	if !sizeRE.MatchString(*size) {
-		return fmt.Errorf("-size %q: want WxH, e.g. 1920x1080", *size)
+		return fmt.Errorf("-size %q: want WxH, e.g. 1280x960", *size)
 	}
 
 	self, err := os.Executable()
