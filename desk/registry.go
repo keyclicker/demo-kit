@@ -46,15 +46,22 @@ type Desktop struct {
 
 	// Owner is the agent that created a desk desktop; nil for :0.
 	Owner *Owner `json:"owner,omitempty"`
+
+	// Recording is the mp4 a desk desktop records itself into.
+	Recording string `json:"recording,omitempty"`
 }
 
 func unitName(n int) string  { return fmt.Sprintf("desk-%d", n) }
 func tokenPath(n int) string { return filepath.Join(stateDir, strconv.Itoa(n)) }
 
+// recordingPrefix marks the token comment naming the desktop's video.
+const recordingPrefix = "# recording: "
+
 // tokenFile renders the websockify TokenFile entry for display n.
-func tokenFile(n int, owner Owner) string {
-	return fmt.Sprintf("%s\n%s\n%d: 127.0.0.1:%d\n",
-		managedMark, ownerLine(owner), n, basePort+n)
+func tokenFile(n int, owner Owner, video string) string {
+	return fmt.Sprintf("%s\n%s\n%s%s\n%d: 127.0.0.1:%d\n",
+		managedMark, ownerLine(owner), recordingPrefix, video,
+		n, basePort+n)
 }
 
 // parseDisplay accepts "10" or ":10" within desk's display range.
@@ -84,8 +91,8 @@ func unitAlive(n int) bool {
 // ---- Commands ----
 
 // cmdNew starts desk-N on the lowest free display and prints ":N" once
-// the desktop is ready for clients. It belongs to the calling agent and
-// goes away when that agent exits.
+// the desktop is ready for clients. It belongs to the calling agent,
+// records itself, and goes away when that agent exits.
 func cmdNew(args []string) error {
 	fs := flag.NewFlagSet("new", flag.ExitOnError)
 	size := fs.String("size", "1280x960", "screen size, WxH")
@@ -120,13 +127,21 @@ func cmdNew(args []string) error {
 
 	unit := unitName(n)
 
-	// Type=notify: systemd-run returns once `desk run` reports ready
+	video, err := recordingPath(n)
+	if err != nil {
+		return err
+	}
+
+	// Type=notify: systemd-run returns once `desk run` reports ready.
+	// KillMode=mixed: stop signals only `desk run`, which shuts ffmpeg
+	// down before Xvnc so the video gets finalized.
 	start := exec.Command("systemd-run", "--user", "--quiet", "--collect",
 		"--unit="+unit, fmt.Sprintf("--description=desk :%d", n),
 		"--property=Type=notify", "--property=TimeoutStartSec=30",
+		"--property=KillMode=mixed",
 		fmt.Sprintf("--property=ExecStopPost=%s cleanup %d", self, n),
 		self, "run", fmt.Sprintf("-owner=%d:%d", owner.PID, owner.Start),
-		strconv.Itoa(n), *size)
+		"-record="+video, strconv.Itoa(n), *size)
 	start.Stderr = os.Stderr
 
 	if err := start.Run(); err != nil {
@@ -135,6 +150,7 @@ func cmdNew(args []string) error {
 	}
 
 	fmt.Printf(":%d\n", n)
+	fmt.Fprintf(os.Stderr, "recording: %s (finalized by desk rm)\n", video)
 	return nil
 }
 
@@ -195,10 +211,10 @@ func cmdRemove(args []string) error {
 	}
 
 	// Desk displays by number; a nil owner predates ownership
-	owned := map[int]*Owner{}
+	owned := map[int]Desktop{}
 	for _, d := range desks {
 		if n, err := parseDisplay(d.Token); err == nil && d.ViewOnly {
-			owned[n] = d.Owner
+			owned[n] = d
 		}
 	}
 
@@ -209,8 +225,8 @@ func cmdRemove(args []string) error {
 	var targets []int
 
 	if *all {
-		for n, o := range owned {
-			if *force || mine(o) {
+		for n, d := range owned {
+			if *force || mine(d.Owner) {
 				targets = append(targets, n)
 			}
 		}
@@ -222,10 +238,12 @@ func cmdRemove(args []string) error {
 			return err
 		}
 
-		o, ok := owned[n]
+		d, ok := owned[n]
 		if !ok {
 			return fmt.Errorf(":%d: no such desk display", n)
 		}
+
+		o := d.Owner
 		if !*force && !mine(o) {
 			owner := "an unknown owner"
 			if o != nil {
@@ -252,10 +270,21 @@ func cmdRemove(args []string) error {
 		units = append(units, unitName(n))
 	}
 
+	// Blocks until each unit is down, video finalized
 	stop := exec.Command("systemctl", units...)
 	stop.Stderr = os.Stderr
 
-	return stop.Run()
+	if err := stop.Run(); err != nil {
+		return err
+	}
+
+	for _, n := range targets {
+		if video := owned[n].Recording; video != "" {
+			fmt.Printf(":%d recording: %s\n", n, video)
+		}
+	}
+
+	return nil
 }
 
 // ---- Registry ----
@@ -295,6 +324,9 @@ func list() ([]Desktop, error) {
 		for _, line := range strings.Split(string(data), "\n") {
 			if o, ok := parseOwnerLine(line); ok {
 				desk.Owner = &o
+			}
+			if video, ok := strings.CutPrefix(line, recordingPrefix); ok {
+				desk.Recording = video
 			}
 		}
 

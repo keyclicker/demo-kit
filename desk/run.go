@@ -27,16 +27,18 @@ const (
 )
 
 // cmdRun is the main process of a desk-N unit: it runs Xvnc and xfwm4,
-// registers the noVNC token, and exits once its owner does. `desk
-// cleanup` undoes it on stop.
+// records the screen, registers the noVNC token, and exits once its
+// owner does. `desk cleanup` undoes it on stop.
 func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	ownerArg := fs.String("owner", "", "owning process, PID:START")
+	video := fs.String("record", "", "record the screen to this mp4")
 	fs.Parse(args)
 	args = fs.Args()
 
-	if len(args) != 2 {
-		return errors.New("usage: desk run -owner PID:START N WxH")
+	if len(args) != 2 || *video == "" {
+		return errors.New("usage: desk run -owner PID:START " +
+			"-record FILE N WxH")
 	}
 
 	owner, err := parseOwnerArg(*ownerArg)
@@ -125,9 +127,32 @@ func cmdRun(args []string) error {
 		log.Printf("xfwm4: %v", err)
 	}
 
+	// ---- Frame clock and recording ----
+
+	clock, err := holdFrameClock(basePort + n)
+	if err != nil {
+		log.Printf("frame clock: %v (vsynced apps run at 1 fps)", err)
+	} else {
+		defer clock.Close()
+	}
+
+	ffmpeg, err := startRecording(n, *video, env)
+	if err != nil {
+		log.Printf("ffmpeg: %v (not recording)", err)
+		ffmpeg = nil
+	}
+
+	// Video first: it needs the X server to finish cleanly
+	stopAll := func() {
+		stopRecording(ffmpeg)
+		xvnc.Process.Signal(syscall.SIGTERM)
+		<-exited
+	}
+
 	// ---- Register ----
 
-	if err := writeToken(n, owner); err != nil {
+	if err := writeToken(n, owner, *video); err != nil {
+		stopAll()
 		return err
 	}
 
@@ -145,17 +170,16 @@ func cmdRun(args []string) error {
 
 	select {
 	case <-stop:
-		xvnc.Process.Signal(syscall.SIGTERM)
-		<-exited
+		stopAll()
 		return nil
 
 	case <-ownerGone:
 		log.Printf("owner %s exited, closing", owner)
-		xvnc.Process.Signal(syscall.SIGTERM)
-		<-exited
+		stopAll()
 		return nil
 
 	case err := <-exited:
+		stopRecording(ffmpeg)
 		return fmt.Errorf("Xtigervnc exited: %v", err)
 	}
 }
@@ -189,9 +213,9 @@ func watchOwner(owner Owner, gone chan<- struct{}) {
 }
 
 // writeToken registers display n with websockify, atomically.
-func writeToken(n int, owner Owner) error {
+func writeToken(n int, owner Owner, video string) error {
 	tmp := tokenPath(n) + ".tmp"
-	data := []byte(tokenFile(n, owner))
+	data := []byte(tokenFile(n, owner, video))
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
