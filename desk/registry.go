@@ -157,8 +157,13 @@ func cmdList(args []string) error {
 
 	for _, d := range desks {
 		switch {
-		case !d.ViewOnly:
+		case !d.ViewOnly && d.Owner == nil:
 			fmt.Printf("%-4s user, interactive\n", d.Display)
+		case !d.ViewOnly && d.Owner.Same(me):
+			fmt.Printf("%-4s user, claimed by %s (yours)\n",
+				d.Display, d.Owner)
+		case !d.ViewOnly:
+			fmt.Printf("%-4s user, claimed by %s\n", d.Display, d.Owner)
 		case d.Owner == nil:
 			fmt.Printf("%-4s desk, owner unknown\n", d.Display)
 		case d.Owner.Same(me):
@@ -291,6 +296,11 @@ func list() ([]Desktop, error) {
 			if o, ok := parseOwnerLine(line); ok {
 				desk.Owner = &o
 			}
+		}
+
+		// A user display's owner is the agent holding its claim
+		if n, err := strconv.Atoi(token); err == nil && !managed {
+			desk.Owner = readClaim(n)
 		}
 
 		desks = append(desks, desk)

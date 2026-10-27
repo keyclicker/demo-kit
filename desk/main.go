@@ -7,6 +7,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -18,8 +19,13 @@ const usageText = `desk: disposable X displays for agents
   desk ls [-json]                list desktops and their owners
   desk rm [-force] :N... | -all  stop your desktops (-force: anyone's)
 
-A desktop belongs to the agent that ran desk new (the first non-shell
-ancestor, or $DESK_OWNER_PID) and closes when that agent exits.
+  desk claim [-force] [:0]       take the user's :0 for yourself
+  desk release [:0]              give it back
+
+A desktop or claim belongs to the agent that ran desk (the first
+non-shell ancestor, or $DESK_OWNER_PID) and ends when that agent exits.
+claim exits 3 while the user is active (input in the last 10 min): ask
+them, then claim -force. Another agent's claim always blocks.
 
 Oneliner:  DISPLAY=$(desk new) xterm &
 `
@@ -48,6 +54,10 @@ func main() {
 		err = cmdRun(args)
 	case "cleanup":
 		err = cmdCleanup(args)
+	case "claim":
+		err = cmdClaim(args)
+	case "release":
+		err = cmdRelease(args)
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usageText)
 	default:
@@ -55,6 +65,9 @@ func main() {
 		os.Exit(2)
 	}
 
+	if errors.Is(err, errUserActive) {
+		os.Exit(3)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}

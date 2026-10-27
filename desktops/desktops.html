@@ -96,10 +96,6 @@
         tab.textContent = desk.viewOnly
           ? `Agent · ${desk.display}`
           : `Main · ${desk.display}`;
-        if (desk.viewOnly) {
-          const owner = desk.owner ? `${desk.owner.name} ${desk.owner.pid}` : "unknown";
-          tab.title = `view-only · owner: ${owner}`;
-        }
 
         const frame = document.createElement("iframe");
         frame.title = `Desktop ${desk.display}`;
@@ -112,6 +108,14 @@
         document.body.append(frame);
 
         desks.set(desk.token, { tab, frame });
+      }
+
+      // Owner on hover: an agent desktop's creator, or the agent that
+      // claimed :0.
+      function tabTitle(desk) {
+        const who = desk.owner ? `${desk.owner.name} ${desk.owner.pid}` : null;
+        if (desk.viewOnly) return `view-only · owner: ${who ?? "unknown"}`;
+        return who ? `claimed by ${who}` : "";
       }
 
       // Match tabs to the desktop list; true if anything changed.
@@ -133,6 +137,7 @@
             add(desk);
             changed = true;
           }
+          desks.get(desk.token).tab.title = tabTitle(desk);
         }
 
         // Map order follows insertion; re-sort for the fallback tab
