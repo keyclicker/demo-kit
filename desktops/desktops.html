@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>demo-kit desktops</title>
+    <style>
+      /* Always dark: it frames desktops, not a page. */
+      :root {
+        color-scheme: dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #e5e5e5;
+        background: #1a1a1a;
+        font-size: 13px;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+
+      nav {
+        display: flex;
+        gap: 4px;
+        padding: 2px 8px;
+        background: #242424;
+        border-bottom: 1px solid #333333;
+      }
+
+      nav a {
+        padding: 2px 12px;
+        color: #999999;
+        font-weight: 500;
+        text-decoration: none;
+        border-radius: 6px;
+      }
+
+      nav a[aria-current] {
+        color: #ffffff;
+        background: #3a3a3a;
+      }
+
+      nav .end {
+        margin-left: auto;
+      }
+
+      iframe {
+        flex: 1;
+        width: 100%;
+        border: 0;
+      }
+
+      iframe[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- One live noVNC per desktop, listed by hub's /api/desktops
+         (`desk ls -json`) and re-polled, so agent desktops come and go
+         as tabs. Tabs only toggle which one shows, so switching never
+         reconnects. :0 opens interactive; desk's agent desktops are
+         view-only (their Xvnc ignores VNC input too). `view_only` is
+         explicit, so noVNC's saved toggle never leaks across them.
+         For real work on :0, use Moonlight. -->
+    <nav>
+      <a class="end" id="sunshine" href="#">sunshine</a>
+    </nav>
+
+    <script>
+      const nav = document.querySelector("nav");
+      const sunshine = document.getElementById("sunshine");
+
+      // Sunshine's web UI, proxied by tailscale serve for a valid cert.
+      sunshine.href = `https://${location.hostname}:47991/`;
+
+      // token → { tab, frame }, in display order
+      const desks = new Map();
+
+      function vncURL(desk) {
+        const path = encodeURIComponent(`desktop/websockify?token=${desk.token}`);
+        return "desktop/vnc.html?autoconnect=true&reconnect=true" +
+          `&resize=scale&view_only=${desk.viewOnly}&path=${path}`;
+      }
+
+      // Add a tab and a live noVNC frame for a new desktop.
+      function add(desk) {
+        const tab = document.createElement("a");
+        tab.href = "#" + desk.token;
+        tab.textContent = desk.viewOnly
+          ? `Agent · ${desk.display}`
+          : `Main · ${desk.display}`;
+
+        const frame = document.createElement("iframe");
+        frame.title = `Desktop ${desk.display}`;
+        frame.src = vncURL(desk);
+        frame.hidden = true;
+
+        // Keep tabs sorted by display number
+        const next = [...desks.keys()].find((t) => Number(t) > Number(desk.token));
+        nav.insertBefore(tab, next ? desks.get(next).tab : sunshine);
+        document.body.append(frame);
+
+        desks.set(desk.token, { tab, frame });
+      }
+
+      // Owner on hover: an agent desktop's creator, or the agent that
+      // claimed :0.
+      function tabTitle(desk) {
+        const who = desk.owner ? `${desk.owner.name} ${desk.owner.pid}` : null;
+        if (desk.viewOnly) return `view-only · owner: ${who ?? "unknown"}`;
+        return who ? `claimed by ${who}` : "";
+      }
+
+      // Match tabs to the desktop list; true if anything changed.
+      function sync(list) {
+        const live = new Set(list.map((d) => d.token));
+        let changed = false;
+
+        for (const [token, { tab, frame }] of desks) {
+          if (!live.has(token)) {
+            tab.remove();
+            frame.remove();
+            desks.delete(token);
+            changed = true;
+          }
+        }
+
+        for (const desk of list) {
+          if (!desks.has(desk.token)) {
+            add(desk);
+            changed = true;
+          }
+          desks.get(desk.token).tab.title = tabTitle(desk);
+        }
+
+        // Map order follows insertion; re-sort for the fallback tab
+        const sorted = [...desks].sort(([a], [b]) => a - b);
+        desks.clear();
+        for (const [token, entry] of sorted) desks.set(token, entry);
+
+        return changed;
+      }
+
+      // Show the desktop named by the hash, else the first one.
+      function show() {
+        if (desks.size === 0) return;
+
+        const wanted = location.hash.slice(1);
+        const name = desks.has(wanted) ? wanted : desks.keys().next().value;
+
+        for (const [token, { tab, frame }] of desks) {
+          frame.hidden = token !== name;
+          if (token === name) {
+            tab.setAttribute("aria-current", "true");
+          } else {
+            tab.removeAttribute("aria-current");
+          }
+        }
+        desks.get(name).frame.focus();
+      }
+
+      async function poll() {
+        try {
+          const res = await fetch("/api/desktops", { cache: "no-store" });
+          if (res.ok && sync(await res.json())) show();
+        } catch {
+          // hub unreachable: keep the tabs we have
+        }
+      }
+
+      addEventListener("hashchange", show);
+
+      // :0 first, so the page works even while hub is down
+      sync([{ display: ":0", token: "0", viewOnly: false }]);
+      show();
+      poll();
+      setInterval(poll, 3000);
+    </script>
+  </body>
+</html>
