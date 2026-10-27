@@ -24,9 +24,11 @@ func TestParseDisplay(t *testing.T) {
 // websockify's TokenFile skips "#" lines and splits the rest on ":\s"
 func TestTokenFileParsesLikeWebsockify(t *testing.T) {
 	line := regexp.MustCompile(`^(\w+):\s(127\.0\.0\.1:\d+)$`)
+	file := tokenFile(12, Owner{PID: 42, Start: 7, Name: "claude"},
+		"/home/u/public/recordings/a b.mp4")
 	var targets []string
 
-	for _, l := range strings.Split(tokenFile(12, Owner{PID: 42, Start: 7, Name: "claude"}), "\n") {
+	for _, l := range strings.Split(file, "\n") {
 		if l == "" || strings.HasPrefix(l, "#") {
 			continue
 		}
@@ -40,7 +42,7 @@ func TestTokenFileParsesLikeWebsockify(t *testing.T) {
 	if len(targets) != 1 || targets[0] != "127.0.0.1:5912" {
 		t.Fatalf("targets = %v", targets)
 	}
-	if !strings.Contains(tokenFile(12, Owner{PID: 42, Start: 7, Name: "claude"}), managedMark) {
+	if !strings.Contains(file, managedMark) {
 		t.Fatal("token file lacks the managed mark")
 	}
 }

@@ -2,8 +2,9 @@
 //
 // Each desktop is a TigerVNC Xvnc server rendering on the iGPU through
 // its DRM render node, with xfwm4 on top, run as the transient systemd
-// user unit desk-N. Its VNC port is registered as noVNC token N in
-// /run/desk, so the /desktops page picks it up as a view-only tab.
+// user unit desk-N that records itself to ~/public/recordings. Its VNC
+// port is registered as noVNC token N in /run/desk, so the /desktops
+// page picks it up as a view-only tab.
 package main
 
 import (
@@ -15,9 +16,10 @@ import (
 
 const usageText = `desk: disposable X displays for agents
 
-  desk new [-size WxH]           start a desktop, print its DISPLAY (:N)
+  desk new [-size WxH]           start a recorded desktop, print :N
   desk ls [-json]                list desktops and their owners
-  desk rm [-force] :N... | -all  stop your desktops (-force: anyone's)
+  desk rm [-force] :N... | -all  stop your desktops (-force: anyone's),
+                                 print their finished videos
 
   desk claim [-force] [:0]       take the user's :0 for yourself
   desk release [:0]              give it back
