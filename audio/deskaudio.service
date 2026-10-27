@@ -1,0 +1,13 @@
+# deskaudio: streams :0's desktop-speaker sink to the /desktops page.
+# Exposed on the tailnet by `tailscale serve --set-path /desktop-audio`.
+[Unit]
+Description=deskaudio, browser audio for :0
+After=pipewire.service
+
+[Service]
+ExecStart=%h/.local/bin/deskaudio -addr 127.0.0.1:8091 -sink desktop-speaker
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
