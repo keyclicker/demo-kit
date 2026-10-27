@@ -122,7 +122,7 @@
 
         // Keep tabs sorted by display number
         const next = [...desks.keys()].find((t) => Number(t) > Number(desk.token));
-        nav.insertBefore(tab, next ? desks.get(next).tab : sunshine);
+        nav.insertBefore(tab, next ? desks.get(next).tab : soundButton);
         document.body.append(frame);
 
         desks.set(desk.token, { tab, frame });
