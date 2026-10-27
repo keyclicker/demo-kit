@@ -62,44 +62,118 @@
     </style>
   </head>
   <body>
-    <!-- One live noVNC per desktop (tokens in /etc/novnc/tokens); the
-         tabs only toggle which one shows, so switching never reconnects.
-         Desktops open interactive (noVNC's panel toggles view-only);
-         `view_only` is explicit, so the toggle never leaks across them
-         via noVNC's saved settings. For real work, use Moonlight. -->
+    <!-- One live noVNC per desktop, listed by hub's /api/desktops
+         (`desk ls -json`) and re-polled, so agent desktops come and go
+         as tabs. Tabs only toggle which one shows, so switching never
+         reconnects. :0 opens interactive; desk's agent desktops are
+         view-only (their Xvnc ignores VNC input too). `view_only` is
+         explicit, so noVNC's saved toggle never leaks across them.
+         For real work on :0, use Moonlight. -->
     <nav>
-      <a href="#main">Main · 0</a>
       <a class="end" id="sunshine" href="#">sunshine</a>
     </nav>
-    <iframe id="main" title="Main desktop :0"
-      src="desktop/vnc.html?autoconnect=true&amp;reconnect=true&amp;resize=scale&amp;view_only=false&amp;path=desktop/websockify%3Ftoken%3D0"></iframe>
 
     <script>
+      const nav = document.querySelector("nav");
+      const sunshine = document.getElementById("sunshine");
+
       // Sunshine's web UI, proxied by tailscale serve for a valid cert.
-      document.getElementById("sunshine").href =
-        `https://${location.hostname}:47991/`;
+      sunshine.href = `https://${location.hostname}:47991/`;
+
+      // token → { tab, frame }, in display order
+      const desks = new Map();
+
+      function vncURL(desk) {
+        const path = encodeURIComponent(`desktop/websockify?token=${desk.token}`);
+        return "desktop/vnc.html?autoconnect=true&reconnect=true" +
+          `&resize=scale&view_only=${desk.viewOnly}&path=${path}`;
+      }
+
+      // Add a tab and a live noVNC frame for a new desktop.
+      function add(desk) {
+        const tab = document.createElement("a");
+        tab.href = "#" + desk.token;
+        tab.textContent = desk.viewOnly
+          ? `Agent · ${desk.display}`
+          : `Main · ${desk.display}`;
+        if (desk.viewOnly) tab.title = "view-only";
+
+        const frame = document.createElement("iframe");
+        frame.title = `Desktop ${desk.display}`;
+        frame.src = vncURL(desk);
+        frame.hidden = true;
+
+        // Keep tabs sorted by display number
+        const next = [...desks.keys()].find((t) => Number(t) > Number(desk.token));
+        nav.insertBefore(tab, next ? desks.get(next).tab : sunshine);
+        document.body.append(frame);
+
+        desks.set(desk.token, { tab, frame });
+      }
+
+      // Match tabs to the desktop list; true if anything changed.
+      function sync(list) {
+        const live = new Set(list.map((d) => d.token));
+        let changed = false;
+
+        for (const [token, { tab, frame }] of desks) {
+          if (!live.has(token)) {
+            tab.remove();
+            frame.remove();
+            desks.delete(token);
+            changed = true;
+          }
+        }
+
+        for (const desk of list) {
+          if (!desks.has(desk.token)) {
+            add(desk);
+            changed = true;
+          }
+        }
+
+        // Map order follows insertion; re-sort for the fallback tab
+        const sorted = [...desks].sort(([a], [b]) => a - b);
+        desks.clear();
+        for (const [token, entry] of sorted) desks.set(token, entry);
+
+        return changed;
+      }
 
       // Show the desktop named by the hash, else the first one.
       function show() {
-        const frames = [...document.querySelectorAll("iframe")];
-        const wanted = location.hash.slice(1);
-        const name = frames.some((f) => f.id === wanted) ? wanted : frames[0].id;
+        if (desks.size === 0) return;
 
-        for (const frame of frames) {
-          frame.hidden = frame.id !== name;
-        }
-        for (const tab of document.querySelectorAll("nav a[href^='#']")) {
-          if (tab.hash === "#" + name) {
+        const wanted = location.hash.slice(1);
+        const name = desks.has(wanted) ? wanted : desks.keys().next().value;
+
+        for (const [token, { tab, frame }] of desks) {
+          frame.hidden = token !== name;
+          if (token === name) {
             tab.setAttribute("aria-current", "true");
           } else {
             tab.removeAttribute("aria-current");
           }
         }
-        document.getElementById(name).focus();
+        desks.get(name).frame.focus();
+      }
+
+      async function poll() {
+        try {
+          const res = await fetch("/api/desktops", { cache: "no-store" });
+          if (res.ok && sync(await res.json())) show();
+        } catch {
+          // hub unreachable: keep the tabs we have
+        }
       }
 
       addEventListener("hashchange", show);
+
+      // :0 first, so the page works even while hub is down
+      sync([{ display: ":0", token: "0", viewOnly: false }]);
       show();
+      poll();
+      setInterval(poll, 3000);
     </script>
   </body>
 </html>
