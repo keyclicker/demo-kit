@@ -14,9 +14,12 @@ import (
 
 const usageText = `desk: disposable X displays for agents
 
-  desk new [-size WxH]   start a desktop, print its DISPLAY (e.g. :10)
-  desk ls [-json]        list desktops
-  desk rm :N... | -all   stop desktops
+  desk new [-size WxH]           start a desktop, print its DISPLAY (:N)
+  desk ls [-json]                list desktops and their owners
+  desk rm [-force] :N... | -all  stop your desktops (-force: anyone's)
+
+A desktop belongs to the agent that ran desk new (the first non-shell
+ancestor, or $DESK_OWNER_PID) and closes when that agent exits.
 
 Oneliner:  DISPLAY=$(desk new) xterm &
 `

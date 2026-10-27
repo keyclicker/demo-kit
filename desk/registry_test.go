@@ -26,7 +26,7 @@ func TestTokenFileParsesLikeWebsockify(t *testing.T) {
 	line := regexp.MustCompile(`^(\w+):\s(127\.0\.0\.1:\d+)$`)
 	var targets []string
 
-	for _, l := range strings.Split(tokenFile(12), "\n") {
+	for _, l := range strings.Split(tokenFile(12, Owner{PID: 42, Start: 7, Name: "claude"}), "\n") {
 		if l == "" || strings.HasPrefix(l, "#") {
 			continue
 		}
@@ -40,7 +40,7 @@ func TestTokenFileParsesLikeWebsockify(t *testing.T) {
 	if len(targets) != 1 || targets[0] != "127.0.0.1:5912" {
 		t.Fatalf("targets = %v", targets)
 	}
-	if !strings.Contains(tokenFile(12), managedMark) {
+	if !strings.Contains(tokenFile(12, Owner{PID: 42, Start: 7, Name: "claude"}), managedMark) {
 		t.Fatal("token file lacks the managed mark")
 	}
 }

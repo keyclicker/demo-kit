@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -25,11 +26,22 @@ const (
 	background = "#2b2f36"
 )
 
-// cmdRun is the main process of a desk-N unit: it runs Xvnc and xfwm4
-// and registers the noVNC token. `desk cleanup` undoes it on stop.
+// cmdRun is the main process of a desk-N unit: it runs Xvnc and xfwm4,
+// registers the noVNC token, and exits once its owner does. `desk
+// cleanup` undoes it on stop.
 func cmdRun(args []string) error {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	ownerArg := fs.String("owner", "", "owning process, PID:START")
+	fs.Parse(args)
+	args = fs.Args()
+
 	if len(args) != 2 {
-		return errors.New("usage: desk run N WxH")
+		return errors.New("usage: desk run -owner PID:START N WxH")
+	}
+
+	owner, err := parseOwnerArg(*ownerArg)
+	if err != nil {
+		return err
 	}
 
 	n, err := parseDisplay(args[0])
@@ -115,7 +127,7 @@ func cmdRun(args []string) error {
 
 	// ---- Register ----
 
-	if err := writeToken(n); err != nil {
+	if err := writeToken(n, owner); err != nil {
 		return err
 	}
 
@@ -128,8 +140,17 @@ func cmdRun(args []string) error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 
+	ownerGone := make(chan struct{})
+	go watchOwner(owner, ownerGone)
+
 	select {
 	case <-stop:
+		xvnc.Process.Signal(syscall.SIGTERM)
+		<-exited
+		return nil
+
+	case <-ownerGone:
+		log.Printf("owner %s exited, closing", owner)
 		xvnc.Process.Signal(syscall.SIGTERM)
 		<-exited
 		return nil
@@ -158,10 +179,20 @@ func waitForServer(n int, exited <-chan error) error {
 	return nil
 }
 
+// watchOwner closes gone once the owner process exits.
+func watchOwner(owner Owner, gone chan<- struct{}) {
+	for owner.Alive() {
+		time.Sleep(2 * time.Second)
+	}
+
+	close(gone)
+}
+
 // writeToken registers display n with websockify, atomically.
-func writeToken(n int) error {
+func writeToken(n int, owner Owner) error {
 	tmp := tokenPath(n) + ".tmp"
-	if err := os.WriteFile(tmp, []byte(tokenFile(n)), 0o644); err != nil {
+	data := []byte(tokenFile(n, owner))
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
 

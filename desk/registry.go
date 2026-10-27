@@ -43,14 +43,18 @@ type Desktop struct {
 	// ViewOnly marks desk's own desktops: agents drive them over X,
 	// humans only watch.
 	ViewOnly bool `json:"viewOnly"`
+
+	// Owner is the agent that created a desk desktop; nil for :0.
+	Owner *Owner `json:"owner,omitempty"`
 }
 
 func unitName(n int) string  { return fmt.Sprintf("desk-%d", n) }
 func tokenPath(n int) string { return filepath.Join(stateDir, strconv.Itoa(n)) }
 
 // tokenFile renders the websockify TokenFile entry for display n.
-func tokenFile(n int) string {
-	return fmt.Sprintf("%s\n%d: 127.0.0.1:%d\n", managedMark, n, basePort+n)
+func tokenFile(n int, owner Owner) string {
+	return fmt.Sprintf("%s\n%s\n%d: 127.0.0.1:%d\n",
+		managedMark, ownerLine(owner), n, basePort+n)
 }
 
 // parseDisplay accepts "10" or ":10" within desk's display range.
@@ -80,11 +84,17 @@ func unitAlive(n int) bool {
 // ---- Commands ----
 
 // cmdNew starts desk-N on the lowest free display and prints ":N" once
-// the desktop is ready for clients.
+// the desktop is ready for clients. It belongs to the calling agent and
+// goes away when that agent exits.
 func cmdNew(args []string) error {
 	fs := flag.NewFlagSet("new", flag.ExitOnError)
-	size := fs.String("size", "1280x800", "screen size, WxH")
+	size := fs.String("size", "1280x960", "screen size, WxH")
 	fs.Parse(args)
+
+	owner, err := callerOwner()
+	if err != nil {
+		return err
+	}
 
 	if !sizeRE.MatchString(*size) {
 		return fmt.Errorf("-size %q: want WxH, e.g. 1920x1080", *size)
@@ -115,7 +125,8 @@ func cmdNew(args []string) error {
 		"--unit="+unit, fmt.Sprintf("--description=desk :%d", n),
 		"--property=Type=notify", "--property=TimeoutStartSec=30",
 		fmt.Sprintf("--property=ExecStopPost=%s cleanup %d", self, n),
-		self, "run", strconv.Itoa(n), *size)
+		self, "run", fmt.Sprintf("-owner=%d:%d", owner.PID, owner.Start),
+		strconv.Itoa(n), *size)
 	start.Stderr = os.Stderr
 
 	if err := start.Run(); err != nil {
@@ -142,33 +153,60 @@ func cmdList(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(desks)
 	}
 
+	me, _ := callerOwner()
+
 	for _, d := range desks {
-		owner := "user, interactive"
-		if d.ViewOnly {
-			owner = "desk, view-only"
+		switch {
+		case !d.ViewOnly:
+			fmt.Printf("%-4s user, interactive\n", d.Display)
+		case d.Owner == nil:
+			fmt.Printf("%-4s desk, owner unknown\n", d.Display)
+		case d.Owner.Same(me):
+			fmt.Printf("%-4s %s (yours)\n", d.Display, d.Owner)
+		default:
+			fmt.Printf("%-4s %s\n", d.Display, d.Owner)
 		}
-		fmt.Printf("%-4s %s\n", d.Display, owner)
 	}
 
 	return nil
 }
 
-// cmdRemove stops the given desk displays, or all of them with -all.
+// cmdRemove stops desk displays. Only the caller's own, unless -force:
+// parallel agents must not pull each other's desktops away.
 func cmdRemove(args []string) error {
 	fs := flag.NewFlagSet("rm", flag.ExitOnError)
-	all := fs.Bool("all", false, "stop every desk display")
+	all := fs.Bool("all", false, "stop all of your desk displays")
+	force := fs.Bool("force", false, "also stop other agents' displays")
 	fs.Parse(args)
 
-	var units []string
+	desks, err := list()
+	if err != nil {
+		return err
+	}
+
+	me, err := callerOwner()
+	if err != nil {
+		return err
+	}
+
+	// Desk displays by number; a nil owner predates ownership
+	owned := map[int]*Owner{}
+	for _, d := range desks {
+		if n, err := parseDisplay(d.Token); err == nil && d.ViewOnly {
+			owned[n] = d.Owner
+		}
+	}
+
+	mine := func(o *Owner) bool { return o != nil && o.Same(me) }
+
+	// ---- Pick displays ----
+
+	var targets []int
 
 	if *all {
-		desks, err := list()
-		if err != nil {
-			return err
-		}
-		for _, d := range desks {
-			if n, err := parseDisplay(d.Token); err == nil && d.ViewOnly {
-				units = append(units, unitName(n))
+		for n, o := range owned {
+			if *force || mine(o) {
+				targets = append(targets, n)
 			}
 		}
 	}
@@ -178,15 +216,38 @@ func cmdRemove(args []string) error {
 		if err != nil {
 			return err
 		}
-		units = append(units, unitName(n))
+
+		o, ok := owned[n]
+		if !ok {
+			return fmt.Errorf(":%d: no such desk display", n)
+		}
+		if !*force && !mine(o) {
+			owner := "an unknown owner"
+			if o != nil {
+				owner = o.String()
+			}
+			return fmt.Errorf(":%d belongs to %s, not you (%s); "+
+				"-force to stop it anyway", n, owner, me)
+		}
+
+		targets = append(targets, n)
 	}
 
-	if len(units) == 0 {
+	if len(targets) == 0 {
+		if *all {
+			return nil
+		}
 		return errors.New("nothing to remove: pass :N... or -all")
 	}
 
-	stop := exec.Command("systemctl",
-		append([]string{"--user", "stop"}, units...)...)
+	// ---- Stop ----
+
+	units := []string{"--user", "stop"}
+	for _, n := range targets {
+		units = append(units, unitName(n))
+	}
+
+	stop := exec.Command("systemctl", units...)
 	stop.Stderr = os.Stderr
 
 	return stop.Run()
@@ -225,11 +286,14 @@ func list() ([]Desktop, error) {
 			}
 		}
 
-		desks = append(desks, Desktop{
-			Display:  ":" + token,
-			Token:    token,
-			ViewOnly: managed,
-		})
+		desk := Desktop{Display: ":" + token, Token: token, ViewOnly: managed}
+		for _, line := range strings.Split(string(data), "\n") {
+			if o, ok := parseOwnerLine(line); ok {
+				desk.Owner = &o
+			}
+		}
+
+		desks = append(desks, desk)
 	}
 
 	slices.SortFunc(desks, func(a, b Desktop) int {

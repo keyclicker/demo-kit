@@ -96,7 +96,10 @@
         tab.textContent = desk.viewOnly
           ? `Agent · ${desk.display}`
           : `Main · ${desk.display}`;
-        if (desk.viewOnly) tab.title = "view-only";
+        if (desk.viewOnly) {
+          const owner = desk.owner ? `${desk.owner.name} ${desk.owner.pid}` : "unknown";
+          tab.title = `view-only · owner: ${owner}`;
+        }
 
         const frame = document.createElement("iframe");
         frame.title = `Desktop ${desk.display}`;
