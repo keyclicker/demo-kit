@@ -37,12 +37,16 @@ func startRecording(n int, path string, env []string) (*exec.Cmd, error) {
 		return nil, err
 	}
 
+	// Encode on the 890M (VAAPI), color conversion included: ~4% of a
+	// core at 30 fps, vs ~50% for libx264 veryfast
 	ffmpeg := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
-		"-f", "x11grab", "-framerate", "10", "-i", ":"+strconv.Itoa(n),
+		"-vaapi_device", renderNode,
+		"-f", "x11grab", "-framerate", "30", "-i", ":"+strconv.Itoa(n),
 
-		// yuv420p plays everywhere but needs even sides
-		"-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-		"-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+		// nv12 (yuv420p) plays everywhere but needs even sides
+		"-vf", "hwupload,"+
+			"scale_vaapi=w=trunc(iw/2)*2:h=trunc(ih/2)*2:format=nv12",
+		"-c:v", "h264_vaapi", "-qp", "28",
 		"-movflags", "+faststart", path)
 	ffmpeg.Env = env
 	ffmpeg.Stderr = os.Stderr
