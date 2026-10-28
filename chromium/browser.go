@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,18 +14,10 @@ import (
 	"time"
 )
 
-// errStopped makes `status` exit 1: the browser isn't running.
+// errStopped makes `status` exit 1: no browser is running.
 var errStopped = errors.New("not running")
 
 const flatpakApp = "org.chromium.Chromium"
-
-// Browser is a running Chromium: its main browser process. Port 0
-// means no DevTools: the user's own browser, not one start launched.
-type Browser struct {
-	PID     int
-	Display string
-	Port    int
-}
 
 // xdgDir returns $env, else ~/fallback.
 func xdgDir(env, fallback string) string {
@@ -38,12 +29,6 @@ func xdgDir(env, fallback string) string {
 	return filepath.Join(home, fallback)
 }
 
-// agentProfile is the agents' own, disposable profile.
-func agentProfile() string {
-	return filepath.Join(xdgDir("XDG_DATA_HOME", ".local/share"),
-		"agent-chromium")
-}
-
 // mainProfile is the user's own profile: what their Flatpak Chromium
 // opens without --user-data-dir.
 func mainProfile() string {
@@ -51,30 +36,14 @@ func mainProfile() string {
 	return filepath.Join(home, ".var/app", flatpakApp, "config/chromium")
 }
 
-// stateDir holds start's per-port display and log files, outside the
-// profiles: main is the user's.
-func stateDir() string {
-	return filepath.Join(xdgDir("XDG_STATE_HOME", ".local/state"),
-		"agent-chromium")
-}
-
-// profileFlag adds -profile (agent, main or a directory) to fs and
-// returns its absolute path after fs.Parse.
-func profileFlag(fs *flag.FlagSet) func() (string, error) {
-	p := fs.String("profile", "agent", "agent, main or a directory")
-
-	return func() (string, error) {
-		switch *p {
-		case "agent":
-			return agentProfile(), nil
-		case "main":
-			return mainProfile(), nil
-		}
-		return filepath.Abs(*p)
-	}
-}
-
 // ===== Finding it =====
+
+// Browser is a running Chromium: its main browser process. Ours means
+// it has a DevTools port, so start launched it: never stop the rest.
+type Browser struct {
+	PID  int
+	Ours bool
+}
 
 // browserProfile returns the profile of argv's Chromium, "" unless
 // argv is a main browser process. Flatpak's bwrap wrappers carry the
@@ -117,9 +86,17 @@ func findBrowser(profile string) (*Browser, error) {
 		}
 
 		argv := parseCmdline(raw)
-		if browserProfile(argv) == profile {
-			return describe(pid, argv), nil
+		if browserProfile(argv) != profile {
+			continue
 		}
+
+		b := &Browser{PID: pid}
+		for _, a := range argv {
+			if strings.HasPrefix(a, "--remote-debugging-port=") {
+				b.Ours = true
+			}
+		}
+		return b, nil
 	}
 
 	return nil, nil
@@ -137,45 +114,12 @@ func parseCmdline(raw []byte) []string {
 	return argv
 }
 
-// describe fills in a browser's DevTools port, and the display start
-// recorded: Chromium's retitling overwrites /proc/PID/environ too.
-func describe(pid int, argv []string) *Browser {
-	b := &Browser{PID: pid}
-
-	for _, a := range argv {
-		if v, ok := strings.CutPrefix(a, "--remote-debugging-port="); ok {
-			b.Port, _ = strconv.Atoi(v)
-		}
-	}
-
-	if b.Port != 0 {
-		display, _ := os.ReadFile(stateFile(b.Port, "display"))
-		b.Display = strings.TrimSpace(string(display))
-	}
-
-	return b
-}
-
-// stateFile is start's record for the browser on port: "display", "log".
-func stateFile(port int, kind string) string {
-	return filepath.Join(stateDir(), fmt.Sprintf("%d.%s", port, kind))
-}
-
-func (b *Browser) String() string {
-	if b.Port == 0 {
-		return fmt.Sprintf("pid %d, the user's own Chromium", b.PID)
-	}
-
-	return fmt.Sprintf("pid %d, display %s, port %d", b.PID, b.Display, b.Port)
-}
-
 // ===== Commands =====
 
 func cmdStart(args []string) error {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
 	display := fs.String("display", "", "X display, e.g. :10 from desk new")
-	port := fs.Int("port", 9222, "DevTools port on 127.0.0.1")
-	profile := profileFlag(fs)
+	profileName := fs.String("profile", "temp", "temp, main or a directory")
 	fs.Parse(args)
 
 	// No $DISPLAY fallback: agents inherit the user's :0
@@ -183,98 +127,162 @@ func cmdStart(args []string) error {
 		return errors.New("start: -display required (desk new gives one)")
 	}
 
-	dir, err := profile()
+	// One start at a time: no two pick the same port or profile
+	unlock, err := lockStarts()
 	if err != nil {
 		return err
 	}
+	defer unlock()
 
-	if b, err := findBrowser(dir); err != nil {
-		return err
-	} else if b != nil {
-		return fmt.Errorf("profile in use (%s): one browser per profile", b)
-	}
+	sweepRuns()
 
-	if portBusy(*port) {
-		return fmt.Errorf("port %d is taken: pick another -port", *port)
-	}
-
-	// The user's own settings stay theirs
-	if dir != mainProfile() {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return err
-		}
-		if err := quietPasswords(dir); err != nil {
-			return fmt.Errorf("profile prefs: %w", err)
-		}
-	}
-
-	if err := os.MkdirAll(stateDir(), 0o700); err != nil {
-		return err
-	}
-	err = os.WriteFile(stateFile(*port, "display"), []byte(*display+"\n"), 0o600)
+	r, lock, err := newRun()
 	if err != nil {
 		return err
 	}
+	defer lock.Close()
 
-	logPath := stateFile(*port, "log")
-	if err := launch(dir, *display, *port, fs.Args(), logPath); err != nil {
+	profile, err := prepareProfile(*profileName, r)
+	if err != nil {
+		os.RemoveAll(r.dir)
 		return err
 	}
 
-	if err := waitDevTools(*port, 30*time.Second); err != nil {
-		return fmt.Errorf("%w (log: %s)", err, logPath)
+	if err := r.set("profile", profile); err != nil {
+		return err
+	}
+	if err := r.set("display", *display); err != nil {
+		return err
 	}
 
-	fmt.Println(*port)
+	port, err := freePort()
+	if err != nil {
+		return err
+	}
+	if err := r.set("port", strconv.Itoa(port)); err != nil {
+		return err
+	}
+
+	if err := r.supervise(lock, fs.Args()); err != nil {
+		os.RemoveAll(r.dir)
+		return err
+	}
+
+	if err := waitDevTools(port, 30*time.Second); err != nil {
+		stopBrowser(profile)
+		return fmt.Errorf("%w (log: %s)", err, r.path("log"))
+	}
+
+	fmt.Println(port)
 	return nil
 }
 
-func cmdStatus(args []string) error {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	profile := profileFlag(fs)
-	fs.Parse(args)
+// prepareProfile resolves -profile for run r: a fresh one inside r for
+// temp. Refuses a profile some browser has open: Chromium would hand
+// the launch to it.
+func prepareProfile(name string, r run) (string, error) {
+	var profile string
+	switch name {
+	case "temp":
+		profile = r.path("temp-profile")
+		if err := os.Mkdir(profile, 0o700); err != nil {
+			return "", err
+		}
+		seedWidevine(profile)
 
-	dir, err := profile()
+	case "main":
+		profile = mainProfile()
+
+	default:
+		abs, err := filepath.Abs(name)
+		if err != nil {
+			return "", err
+		}
+		profile = abs
+	}
+
+	if b, err := findBrowser(profile); err != nil {
+		return "", err
+	} else if b != nil {
+		return "", fmt.Errorf("profile in use (pid %d): one browser per "+
+			"profile, or -profile temp", b.PID)
+	}
+
+	// The user's own settings stay theirs
+	if profile != mainProfile() {
+		if err := quietPasswords(profile); err != nil {
+			return "", fmt.Errorf("profile prefs: %w", err)
+		}
+	}
+
+	return profile, nil
+}
+
+func cmdStatus() error {
+	all, err := listRuns()
 	if err != nil {
 		return err
 	}
 
-	b, err := findBrowser(dir)
-	if err != nil {
-		return err
+	var runs []run
+	for _, r := range all {
+		if r.alive() {
+			runs = append(runs, r)
+		}
 	}
-	if b == nil {
-		fmt.Println("stopped")
+	if len(runs) == 0 {
+		fmt.Println("none running")
 		return errStopped
 	}
 
-	fmt.Println("running:", b)
+	fmt.Println("PORT\tDISPLAY\tPROFILE")
+	for _, r := range runs {
+		fmt.Printf("%s\t%s\t%s\n",
+			r.get("port"), r.get("display"), r.profileLabel())
+	}
+
 	return nil
 }
 
 func cmdStop(args []string) error {
-	fs := flag.NewFlagSet("stop", flag.ExitOnError)
-	profile := profileFlag(fs)
-	fs.Parse(args)
+	if len(args) != 1 {
+		return errors.New("usage: agent-chromium stop PORT")
+	}
 
-	dir, err := profile()
+	r, err := findRun(args[0])
 	if err != nil {
 		return err
 	}
 
-	b, err := findBrowser(dir)
+	if err := stopBrowser(r.get("profile")); err != nil {
+		return err
+	}
+
+	// The supervisor deletes temp profiles: wait, so they're gone too
+	waitFor(func() bool { return !r.exists() }, 15*time.Second)
+	return nil
+}
+
+// ===== Helpers =====
+
+// stopBrowser closes profile's browser, if start launched it. TERM
+// closes Chromium cleanly (session, cookies, prefs saved); KILL after
+// 15 s.
+func stopBrowser(profile string) error {
+	b, err := findBrowser(profile)
 	if err != nil || b == nil {
 		return err
 	}
-	if b.Port == 0 {
-		return fmt.Errorf("%s: not ours, never stop it", b)
+	if !b.Ours {
+		return fmt.Errorf("pid %d is the user's own Chromium: never stop it",
+			b.PID)
 	}
 
-	// TERM closes Chromium cleanly: session, cookies and prefs saved
 	if err := syscall.Kill(b.PID, syscall.SIGTERM); err != nil {
 		return err
 	}
-	if waitGone(b.PID, 15*time.Second) {
+	gone := func() bool { return syscall.Kill(b.PID, 0) != nil }
+	if waitFor(gone, 15*time.Second) {
 		return nil
 	}
 
@@ -282,47 +290,17 @@ func cmdStop(args []string) error {
 	return fmt.Errorf("pid %d ignored TERM for 15 s: killed", b.PID)
 }
 
-// ===== Helpers =====
-
-// launch starts Flatpak Chromium detached, in its own session, so it
-// outlives the agent's short-lived tool-call shell.
-func launch(profile, display string, port int, urls []string, logPath string) error {
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+// freePort asks the kernel for a free localhost port. Not
+// --remote-debugging-port=0: Chromium takes that for chromedriver and
+// sets navigator.webdriver.
+func freePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return err
+		return 0, err
 	}
-	defer logFile.Close()
+	defer l.Close()
 
-	args := []string{
-		"run", flatpakApp,
-		"--user-data-dir=" + profile,
-		"--remote-debugging-port=" + strconv.Itoa(port),
-		"--no-first-run",
-		"--no-default-browser-check",
-		"--start-maximized",
-	}
-	args = append(args, urls...)
-
-	cmd := exec.Command("flatpak", args...)
-	cmd.Env = append(os.Environ(), "DISPLAY="+display)
-	cmd.Stdout, cmd.Stderr = logFile, logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	return cmd.Process.Release()
-}
-
-func portBusy(port int) bool {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
-	if err != nil {
-		return false
-	}
-
-	conn.Close()
-	return true
+	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
 // waitDevTools polls the DevTools endpoint until it answers.
@@ -330,24 +308,30 @@ func waitDevTools(port int, timeout time.Duration) error {
 	url := fmt.Sprintf("http://127.0.0.1:%d/json/version", port)
 	client := http.Client{Timeout: time.Second}
 
-	for deadline := time.Now().Add(timeout); time.Now().Before(deadline); {
-		if resp, err := client.Get(url); err == nil {
-			resp.Body.Close()
-			return nil
+	answers := func() bool {
+		resp, err := client.Get(url)
+		if err != nil {
+			return false
 		}
-		time.Sleep(300 * time.Millisecond)
+		resp.Body.Close()
+		return true
 	}
 
-	return fmt.Errorf("no DevTools on port %d after %s", port, timeout)
+	if !waitFor(answers, timeout) {
+		return fmt.Errorf("no DevTools on port %d after %s", port, timeout)
+	}
+
+	return nil
 }
 
-func waitGone(pid int, timeout time.Duration) bool {
+// waitFor polls cond until it holds or timeout passes.
+func waitFor(cond func() bool, timeout time.Duration) bool {
 	for deadline := time.Now().Add(timeout); time.Now().Before(deadline); {
-		if syscall.Kill(pid, 0) != nil {
+		if cond() {
 			return true
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	return false
+	return cond()
 }
