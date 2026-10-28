@@ -7,26 +7,27 @@ import (
 	"testing"
 )
 
-func TestIsBrowser(t *testing.T) {
-	const profile = "/home/u/.local/share/agent-chromium"
-	dir := "--user-data-dir=" + profile
+func TestBrowserProfile(t *testing.T) {
+	t.Setenv("HOME", "/home/u")
+	const agent = "/home/u/.local/share/agent-chromium"
+	dir := "--user-data-dir=" + agent
 
 	cases := []struct {
 		name string
 		argv []string
-		want bool
+		want string
 	}{
-		{"browser", []string{"/app/chromium/chrome", "--enable-features=X", dir}, true},
-		{"renderer", []string{"/app/chromium/chrome", "--type=renderer", dir}, false},
-		{"bwrap wrapper", []string{"bwrap", "--args", "71", "--", "chromium", dir}, false},
-		{"other profile", []string{"/app/chromium/chrome", dir + "-test"}, false},
-		{"shell quoting it", []string{"zsh", "-c", "pkill -f " + dir}, false},
-		{"empty", nil, false},
+		{"agent browser", []string{"/app/chromium/chrome", "--x", dir}, agent},
+		{"user's own", []string{"/app/chromium/chrome", "--x"}, mainProfile()},
+		{"renderer", []string{"/app/chromium/chrome", "--type=renderer", dir}, ""},
+		{"bwrap wrapper", []string{"bwrap", "--", "chromium", dir}, ""},
+		{"shell quoting it", []string{"zsh", "-c", "pkill -f " + dir}, ""},
+		{"empty", nil, ""},
 	}
 
 	for _, c := range cases {
-		if got := isBrowser(c.argv, profile); got != c.want {
-			t.Errorf("%s: isBrowser = %v, want %v", c.name, got, c.want)
+		if got := browserProfile(c.argv); got != c.want {
+			t.Errorf("%s: browserProfile = %q, want %q", c.name, got, c.want)
 		}
 	}
 }
@@ -85,5 +86,49 @@ func TestQuietPasswordsKeepsOtherPrefs(t *testing.T) {
 func TestQuietPasswordsFreshProfile(t *testing.T) {
 	if err := quietPasswords(t.TempDir()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWidevineSeedAndHarvest(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	// A first temp profile downloaded a CDM: harvest caches it
+	first := t.TempDir()
+	cdm := filepath.Join(first, "WidevineCdm")
+	os.MkdirAll(filepath.Join(cdm, "4.10.1", "_platform_specific"), 0o700)
+	os.WriteFile(filepath.Join(cdm, "4.10.1", "manifest.json"), []byte("{}"), 0o600)
+	os.WriteFile(filepath.Join(cdm, widevineHint),
+		[]byte(`{"Path":"`+filepath.Join(cdm, "4.10.1")+`"}`), 0o600)
+
+	if err := harvestWidevine(first); err != nil {
+		t.Fatal(err)
+	}
+	if v := widevineVersion(widevineCache()); v != "4.10.1" {
+		t.Fatalf("cache version = %q, want 4.10.1", v)
+	}
+
+	// The next one gets a copy, its hint pointing at its own
+	next := t.TempDir()
+	seedWidevine(next)
+
+	data, _ := os.ReadFile(filepath.Join(next, "WidevineCdm", widevineHint))
+	var hint struct{ Path string }
+	json.Unmarshal(data, &hint)
+	if want := filepath.Join(next, "WidevineCdm", "4.10.1"); hint.Path != want {
+		t.Errorf("seeded hint = %q, want %q", hint.Path, want)
+	}
+	if _, err := os.Stat(filepath.Join(hint.Path, "manifest.json")); err != nil {
+		t.Errorf("seeded CDM missing: %v", err)
+	}
+}
+
+func TestSeedWidevineEmptyCache(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	profile := t.TempDir()
+	seedWidevine(profile)
+
+	if _, err := os.Stat(filepath.Join(profile, "WidevineCdm")); err == nil {
+		t.Error("seeded a CDM from an empty cache")
 	}
 }

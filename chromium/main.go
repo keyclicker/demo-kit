@@ -1,11 +1,14 @@
-// Command agent-chromium runs the agents' shared, logged-in browser.
+// Command agent-chromium runs the agents' browser.
 //
-// It's Flatpak Chromium on a persistent profile the user logs into
-// once, launched as a plain browser with a DevTools port on localhost.
-// Agents attach with `agent-browser connect PORT` and drive it with X
-// input on top. Unlike a browser agent-browser launches itself, it
-// carries no automation flags, so sites see navigator.webdriver false,
-// and the profile keeps logins and the Widevine CDM between runs.
+// It's Flatpak Chromium launched as a plain browser with a DevTools
+// port on localhost. Agents attach with `agent-browser connect PORT`
+// and drive it with X input on top. Unlike a browser agent-browser
+// launches itself, it carries no automation flags, so sites see
+// navigator.webdriver false, and Widevine plays DRM.
+//
+// Each start gets a fresh temp profile and its own port, so agents
+// run in parallel. The user's main profile is there for tasks that
+// need their accounts.
 package main
 
 import (
@@ -15,19 +18,22 @@ import (
 	"os"
 )
 
-const usageText = `agent-chromium: the agents' logged-in browser (Flatpak Chromium)
+const usageText = `agent-chromium: the agents' browser (Flatpak Chromium)
 
-  agent-chromium start -display :N [-port 9222] [URL]
-                          launch it on display :N, print the DevTools port
-  agent-chromium status   print pid, display and port; exit 1 if stopped
-  agent-chromium stop     close it gracefully
+  agent-chromium start -display :N [-profile P] [URL...]
+                          launch it on display :N, print its DevTools port
+  agent-chromium status   list running ones; exit 1 if none
+  agent-chromium stop PORT
+                          close it gracefully
 
-  -profile DIR            profile (default ~/.local/share/agent-chromium)
+  -profile temp           fresh and empty, deleted on exit (default)
+  -profile main           the user's own: their accounts, their settings
+  -profile DIR            any other
 
-One profile, one browser: start refuses while it runs anywhere.
-Attach with:  agent-browser connect 9222
-Stop it before desk rm: losing its display kills it mid-write.
-Logins and the first Widevine download: the user runs it on :0.
+temp runs in parallel. main and DIR: one browser per profile, and
+start refuses while it's open anywhere, the user's Chromium included.
+Attach with:  agent-browser connect PORT
+On main, stop it before desk rm: losing its display kills it mid-write.
 `
 
 func main() {
@@ -46,9 +52,11 @@ func main() {
 	case "start":
 		err = cmdStart(args)
 	case "status":
-		err = cmdStatus(args)
+		err = cmdStatus()
 	case "stop":
 		err = cmdStop(args)
+	case "supervise": // internal: start's detached half
+		err = cmdSupervise(args)
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usageText)
 	default:
