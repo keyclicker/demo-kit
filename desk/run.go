@@ -127,6 +127,13 @@ func cmdRun(args []string) error {
 		log.Printf("xfwm4: %v", err)
 	}
 
+	// Listed apps open maximized (maximize.go)
+	go func() {
+		if err := maximizeNew(display); err != nil {
+			log.Printf("maximize: %v", err)
+		}
+	}()
+
 	// ---- Frame clock and recording ----
 
 	clock, err := holdFrameClock(basePort + n)
