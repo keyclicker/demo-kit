@@ -1,6 +1,6 @@
 ---
 name: x11-computer-use
-description: Use when you need computer use on X11 — your own display, screenshots, clicks, typing, keys, scrolling and drags via xdotool, scrot and ImageMagick, recorded to a video.
+description: You MUST use it for any computer use on X11 — your own display, screenshots, clicks, typing, keys, scrolling and drags via xdotool, scrot and ImageMagick, recorded to a video.
 ---
 
 # Computer toolset → X11 cheatsheet
