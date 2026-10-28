@@ -1,11 +1,13 @@
-// Command agent-chromium runs the agents' shared, logged-in browser.
+// Command agent-chromium runs the agents' logged-in browser.
 //
-// It's Flatpak Chromium on a persistent profile the user logs into
-// once, launched as a plain browser with a DevTools port on localhost.
-// Agents attach with `agent-browser connect PORT` and drive it with X
-// input on top. Unlike a browser agent-browser launches itself, it
-// carries no automation flags, so sites see navigator.webdriver false,
-// and the profile keeps logins and the Widevine CDM between runs.
+// It's Flatpak Chromium launched as a plain browser with a DevTools
+// port on localhost. Agents attach with `agent-browser connect PORT`
+// and drive it with X input on top. Unlike a browser agent-browser
+// launches itself, it carries no automation flags, so sites see
+// navigator.webdriver false, and profiles keep logins and Widevine.
+//
+// Two profiles: the agents' own, disposable one (default), and the
+// user's main one, for tasks that need their accounts.
 package main
 
 import (
@@ -22,12 +24,14 @@ const usageText = `agent-chromium: the agents' logged-in browser (Flatpak Chromi
   agent-chromium status   print pid, display and port; exit 1 if stopped
   agent-chromium stop     close it gracefully
 
-  -profile DIR            profile (default ~/.local/share/agent-chromium)
+  -profile agent          the agents' own, disposable profile (default)
+  -profile main           the user's own: their accounts, their settings
+  -profile DIR            any other
 
-One profile, one browser: start refuses while it runs anywhere.
+One browser per profile. start refuses while it's open anywhere,
+the user's own Chromium included; stop never closes theirs.
 Attach with:  agent-browser connect 9222
 Stop it before desk rm: losing its display kills it mid-write.
-Logins and the first Widevine download: the user runs it on :0.
 `
 
 func main() {

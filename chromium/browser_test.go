@@ -7,26 +7,27 @@ import (
 	"testing"
 )
 
-func TestIsBrowser(t *testing.T) {
-	const profile = "/home/u/.local/share/agent-chromium"
-	dir := "--user-data-dir=" + profile
+func TestBrowserProfile(t *testing.T) {
+	t.Setenv("HOME", "/home/u")
+	const agent = "/home/u/.local/share/agent-chromium"
+	dir := "--user-data-dir=" + agent
 
 	cases := []struct {
 		name string
 		argv []string
-		want bool
+		want string
 	}{
-		{"browser", []string{"/app/chromium/chrome", "--enable-features=X", dir}, true},
-		{"renderer", []string{"/app/chromium/chrome", "--type=renderer", dir}, false},
-		{"bwrap wrapper", []string{"bwrap", "--args", "71", "--", "chromium", dir}, false},
-		{"other profile", []string{"/app/chromium/chrome", dir + "-test"}, false},
-		{"shell quoting it", []string{"zsh", "-c", "pkill -f " + dir}, false},
-		{"empty", nil, false},
+		{"agent browser", []string{"/app/chromium/chrome", "--x", dir}, agent},
+		{"user's own", []string{"/app/chromium/chrome", "--x"}, mainProfile()},
+		{"renderer", []string{"/app/chromium/chrome", "--type=renderer", dir}, ""},
+		{"bwrap wrapper", []string{"bwrap", "--", "chromium", dir}, ""},
+		{"shell quoting it", []string{"zsh", "-c", "pkill -f " + dir}, ""},
+		{"empty", nil, ""},
 	}
 
 	for _, c := range cases {
-		if got := isBrowser(c.argv, profile); got != c.want {
-			t.Errorf("%s: isBrowser = %v, want %v", c.name, got, c.want)
+		if got := browserProfile(c.argv); got != c.want {
+			t.Errorf("%s: browserProfile = %q, want %q", c.name, got, c.want)
 		}
 	}
 }

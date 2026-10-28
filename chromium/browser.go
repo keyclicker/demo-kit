@@ -20,52 +20,82 @@ var errStopped = errors.New("not running")
 
 const flatpakApp = "org.chromium.Chromium"
 
-// Browser is a running agent Chromium: its main browser process.
+// Browser is a running Chromium: its main browser process. Port 0
+// means no DevTools: the user's own browser, not one start launched.
 type Browser struct {
 	PID     int
 	Display string
 	Port    int
 }
 
-// defaultProfile is the persistent profile: XDG data, since it holds
-// logins worth keeping (and ~ is what Flatpak Chromium may write to).
-func defaultProfile() string {
-	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
-		return filepath.Join(dir, "agent-chromium")
+// xdgDir returns $env, else ~/fallback.
+func xdgDir(env, fallback string) string {
+	if dir := os.Getenv(env); dir != "" {
+		return dir
 	}
 
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local/share/agent-chromium")
+	return filepath.Join(home, fallback)
 }
 
-// profileFlag adds -profile to fs and returns its absolute value
-// after fs.Parse.
+// agentProfile is the agents' own, disposable profile.
+func agentProfile() string {
+	return filepath.Join(xdgDir("XDG_DATA_HOME", ".local/share"),
+		"agent-chromium")
+}
+
+// mainProfile is the user's own profile: what their Flatpak Chromium
+// opens without --user-data-dir.
+func mainProfile() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".var/app", flatpakApp, "config/chromium")
+}
+
+// stateDir holds start's per-port display and log files, outside the
+// profiles: main is the user's.
+func stateDir() string {
+	return filepath.Join(xdgDir("XDG_STATE_HOME", ".local/state"),
+		"agent-chromium")
+}
+
+// profileFlag adds -profile (agent, main or a directory) to fs and
+// returns its absolute path after fs.Parse.
 func profileFlag(fs *flag.FlagSet) func() (string, error) {
-	p := fs.String("profile", defaultProfile(), "profile directory")
-	return func() (string, error) { return filepath.Abs(*p) }
+	p := fs.String("profile", "agent", "agent, main or a directory")
+
+	return func() (string, error) {
+		switch *p {
+		case "agent":
+			return agentProfile(), nil
+		case "main":
+			return mainProfile(), nil
+		}
+		return filepath.Abs(*p)
+	}
 }
 
 // ===== Finding it =====
 
-// isBrowser reports whether argv is Chromium's main browser process
-// on profile. Flatpak's bwrap wrappers carry the same flags, and every
-// child process has a --type=, so match the binary too.
-func isBrowser(argv []string, profile string) bool {
+// browserProfile returns the profile of argv's Chromium, "" unless
+// argv is a main browser process. Flatpak's bwrap wrappers carry the
+// same flags, and every child process has a --type=, so match the
+// binary too. No --user-data-dir: the user's own, on the main profile.
+func browserProfile(argv []string) string {
 	if len(argv) == 0 || filepath.Base(argv[0]) != "chrome" {
-		return false
+		return ""
 	}
 
-	found := false
+	profile := mainProfile()
 	for _, a := range argv[1:] {
 		if strings.HasPrefix(a, "--type=") {
-			return false
+			return ""
 		}
-		if a == "--user-data-dir="+profile {
-			found = true
+		if v, ok := strings.CutPrefix(a, "--user-data-dir="); ok {
+			profile = v
 		}
 	}
 
-	return found
+	return profile
 }
 
 // findBrowser scans /proc for profile's browser process, nil if none.
@@ -87,8 +117,8 @@ func findBrowser(profile string) (*Browser, error) {
 		}
 
 		argv := parseCmdline(raw)
-		if isBrowser(argv, profile) {
-			return describe(pid, argv, profile), nil
+		if browserProfile(argv) == profile {
+			return describe(pid, argv), nil
 		}
 	}
 
@@ -109,7 +139,7 @@ func parseCmdline(raw []byte) []string {
 
 // describe fills in a browser's DevTools port, and the display start
 // recorded: Chromium's retitling overwrites /proc/PID/environ too.
-func describe(pid int, argv []string, profile string) *Browser {
+func describe(pid int, argv []string) *Browser {
 	b := &Browser{PID: pid}
 
 	for _, a := range argv {
@@ -118,18 +148,24 @@ func describe(pid int, argv []string, profile string) *Browser {
 		}
 	}
 
-	display, _ := os.ReadFile(displayFile(profile))
-	b.Display = strings.TrimSpace(string(display))
+	if b.Port != 0 {
+		display, _ := os.ReadFile(stateFile(b.Port, "display"))
+		b.Display = strings.TrimSpace(string(display))
+	}
 
 	return b
 }
 
-// displayFile records the display the profile's browser runs on.
-func displayFile(profile string) string {
-	return filepath.Join(profile, "agent-chromium.display")
+// stateFile is start's record for the browser on port: "display", "log".
+func stateFile(port int, kind string) string {
+	return filepath.Join(stateDir(), fmt.Sprintf("%d.%s", port, kind))
 }
 
 func (b *Browser) String() string {
+	if b.Port == 0 {
+		return fmt.Sprintf("pid %d, the user's own Chromium", b.PID)
+	}
+
 	return fmt.Sprintf("pid %d, display %s, port %d", b.PID, b.Display, b.Port)
 }
 
@@ -155,26 +191,32 @@ func cmdStart(args []string) error {
 	if b, err := findBrowser(dir); err != nil {
 		return err
 	} else if b != nil {
-		return fmt.Errorf("already running (%s): one browser per profile", b)
+		return fmt.Errorf("profile in use (%s): one browser per profile", b)
 	}
 
 	if portBusy(*port) {
 		return fmt.Errorf("port %d is taken: pick another -port", *port)
 	}
 
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	if err := quietPasswords(dir); err != nil {
-		return fmt.Errorf("profile prefs: %w", err)
+	// The user's own settings stay theirs
+	if dir != mainProfile() {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		if err := quietPasswords(dir); err != nil {
+			return fmt.Errorf("profile prefs: %w", err)
+		}
 	}
 
-	err = os.WriteFile(displayFile(dir), []byte(*display+"\n"), 0o600)
+	if err := os.MkdirAll(stateDir(), 0o700); err != nil {
+		return err
+	}
+	err = os.WriteFile(stateFile(*port, "display"), []byte(*display+"\n"), 0o600)
 	if err != nil {
 		return err
 	}
 
-	logPath := filepath.Join(dir, "agent-chromium.log")
+	logPath := stateFile(*port, "log")
 	if err := launch(dir, *display, *port, fs.Args(), logPath); err != nil {
 		return err
 	}
@@ -223,6 +265,9 @@ func cmdStop(args []string) error {
 	b, err := findBrowser(dir)
 	if err != nil || b == nil {
 		return err
+	}
+	if b.Port == 0 {
+		return fmt.Errorf("%s: not ours, never stop it", b)
 	}
 
 	// TERM closes Chromium cleanly: session, cookies and prefs saved
