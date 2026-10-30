@@ -133,7 +133,10 @@
 
         // :0 takes input by default; agent desktops ignore it anyway
         const entry = { tab, frame, viewOnly: desk.viewOnly, control: !desk.viewOnly };
-        frame.addEventListener("load", () => applyControl(entry));
+        frame.addEventListener("load", () => {
+          applyControl(entry);
+          applyBell(entry);
+        });
         desks.set(desk.token, entry);
       }
 
@@ -349,10 +352,18 @@
         sound = null;
       }
 
+      // noVNC rings X bells with its own <audio> (same origin): beep only
+      // while 🔊 is on, like the rest of the page's sound.
+      function applyBell(entry) {
+        const bell = entry.frame.contentDocument?.getElementById("noVNC_bell");
+        if (bell) bell.muted = !sound;
+      }
+
       // Browsers only start audio from a click, so sound is never on at load
       soundButton.addEventListener("click", async () => {
         if (sound) stopSound();
         else await startSound();
+        for (const entry of desks.values()) applyBell(entry);
 
         soundButton.setAttribute("aria-pressed", String(!!sound));
         soundButton.textContent = sound ? "🔊 sound" : "🔇 sound";
