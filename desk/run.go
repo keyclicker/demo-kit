@@ -27,18 +27,16 @@ const (
 )
 
 // cmdRun is the main process of a desk-N unit: it runs Xvnc and xfwm4,
-// records the screen, registers the noVNC token, and exits once its
-// owner does. `desk cleanup` undoes it on stop.
+// registers the noVNC token, and exits once its owner does.
+// Recording is desk-rec-N's job (rec.go). `desk cleanup` undoes it on stop.
 func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	ownerArg := fs.String("owner", "", "owning process, PID:START")
-	video := fs.String("record", "", "record the screen to this mp4")
 	fs.Parse(args)
 	args = fs.Args()
 
-	if len(args) != 2 || *video == "" {
-		return errors.New("usage: desk run -owner PID:START " +
-			"-record FILE N WxH")
+	if len(args) != 2 {
+		return errors.New("usage: desk run -owner PID:START N WxH")
 	}
 
 	owner, err := parseOwnerArg(*ownerArg)
@@ -134,7 +132,7 @@ func cmdRun(args []string) error {
 		}
 	}()
 
-	// ---- Frame clock and recording ----
+	// ---- Frame clock ----
 
 	clock, err := holdFrameClock(basePort + n)
 	if err != nil {
@@ -143,22 +141,14 @@ func cmdRun(args []string) error {
 		defer clock.Close()
 	}
 
-	ffmpeg, err := startRecording(n, *video, env)
-	if err != nil {
-		log.Printf("ffmpeg: %v (not recording)", err)
-		ffmpeg = nil
-	}
-
-	// Video first: it needs the X server to finish cleanly
 	stopAll := func() {
-		stopRecording(ffmpeg)
 		xvnc.Process.Signal(syscall.SIGTERM)
 		<-exited
 	}
 
 	// ---- Register ----
 
-	if err := writeToken(n, owner, *video); err != nil {
+	if err := writeToken(n, owner); err != nil {
 		stopAll()
 		return err
 	}
@@ -186,7 +176,6 @@ func cmdRun(args []string) error {
 		return nil
 
 	case err := <-exited:
-		stopRecording(ffmpeg)
 		return fmt.Errorf("Xtigervnc exited: %v", err)
 	}
 }
@@ -220,9 +209,9 @@ func watchOwner(owner Owner, gone chan<- struct{}) {
 }
 
 // writeToken registers display n with websockify, atomically.
-func writeToken(n int, owner Owner, video string) error {
+func writeToken(n int, owner Owner) error {
 	tmp := tokenPath(n) + ".tmp"
-	data := []byte(tokenFile(n, owner, video))
+	data := []byte(tokenFile(n, owner))
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
