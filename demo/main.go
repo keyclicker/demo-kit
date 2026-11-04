@@ -23,6 +23,7 @@ const usageText = `demo: narrated demo and explainer videos, and speech
                          draw code as a code scene would, list its parts
   demo say [-o FILE] [--no-play] [--cost] [text...]
                          speak on :0's speaker (no text: stdin)
+  demo voices            the voice names a script can pick
 
 Recordings come from desk (desk new records; desk rec for more).
 Script format and workflow: the demo skill. Each command: -h.
@@ -49,6 +50,8 @@ func main() {
 		err = cmdFrames(args)
 	case "say":
 		err = cmdSay(args)
+	case "voices":
+		err = cmdVoices(args)
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usageText)
 	default:

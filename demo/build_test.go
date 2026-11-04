@@ -62,7 +62,7 @@ func TestLoadScript(t *testing.T) {
 	}
 
 	// A scene's voice goes over the script's; steps fit any picture
-	os.WriteFile(path, []byte(`{"voice": {"voice": "Charon"}, "scenes": [
+	os.WriteFile(path, []byte(`{"voice": {"name": "Charon"}, "scenes": [
 		{"say": "a", "slide": {"title": "T"}, "voice": {"tempo": 1.5}},
 		{"say": "b", "compare": [{"image": "x.png"}, {"image": "y.png"}]},
 		{"clip": "a.mp4", "audio": true, "steps": [{"say": "c"}]},

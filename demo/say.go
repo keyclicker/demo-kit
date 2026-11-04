@@ -19,19 +19,19 @@ import (
 
 // ---- Voice ----
 
-// Voice is how narration sounds. The defaults: Gemini 3.8 Flash TTS
-// (the lite model won a 17-voice benchmark for male + fast + cheap;
-// flash sounds better for a few cents more), voice Puck.
+// Voice is how narration sounds. The defaults: Gemini 3.8 Flash TTS,
+// voice Umbriel; Puck is the second choice. Flash, never lite: lite is
+// cheaper, but these demos are listened to.
 type Voice struct {
 	Model        string  `json:"model,omitempty"`
-	Name         string  `json:"voice,omitempty"`
+	Name         string  `json:"name,omitempty"`
 	Instructions string  `json:"instructions,omitempty"`
 	Tempo        float64 `json:"tempo,omitempty"` // speed-up, pitch kept
 }
 
 var defaultVoice = Voice{
 	Model: "google/gemini-3.8-flash-tts",
-	Name:  "Puck",
+	Name:  "Umbriel",
 	Instructions: "Adult male voice. Fast, energetic pacing, like a " +
 		"podcast host. Casual, dry-humored. Not whispery, not intimate.",
 	Tempo: 1.2,
@@ -195,6 +195,10 @@ func cmdSay(args []string) error {
 	}
 	fs.Parse(args)
 
+	if err := checkVoice(*v); err != nil {
+		return err
+	}
+
 	text, err := readText(fs.Args(), os.Stdin)
 	if err != nil {
 		return err
@@ -241,7 +245,7 @@ func voiceFlags(fs *flag.FlagSet) *Voice {
 	v := defaultVoice
 	fs.StringVar(&v.Model, "model", v.Model, "OpenRouter TTS model")
 	fs.StringVar(&v.Name, "voice", v.Name,
-		"voice name, provider-specific; empty: model default")
+		"voice name (demo voices); empty: model default")
 	fs.StringVar(&v.Instructions, "instructions", v.Instructions,
 		"delivery direction (Gemini, Fish, OpenAI); empty: none")
 	fs.Float64Var(&v.Tempo, "tempo", v.Tempo,

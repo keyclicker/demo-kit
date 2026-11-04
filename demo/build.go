@@ -58,13 +58,15 @@ type Scene struct {
 
 // Step is one beat of narration. On code, Focus lines [from, to]
 // light up and Marks box text inside them; on an image (in its
-// pixels), Box [x, y, w, h] is spotlit and Arrow [x, y] pointed at.
+// pixels), Box [x, y, w, h] is spotlit and Arrow [x, y] pointed at; on
+// a clip (in its pixels), Zoom [x, y, w, h] fills the frame.
 type Step struct {
 	Say   string   `json:"say"`
 	Focus []int    `json:"focus,omitempty"`
 	Marks []string `json:"marks,omitempty"`
 	Box   []int    `json:"box,omitempty"`
 	Arrow []int    `json:"arrow,omitempty"`
+	Zoom  []int    `json:"zoom,omitempty"`
 }
 
 // loadScript reads a script, resolving clips and images against its
@@ -109,6 +111,9 @@ func loadScript(path string) (*Script, error) {
 		}
 		sc.Voice = &v
 
+		if err := checkVoice(v); err != nil {
+			return nil, fmt.Errorf("scene %d: %w", sc.num, err)
+		}
 		if err := sc.check(); err != nil {
 			return nil, fmt.Errorf("scene %d: %w", sc.num, err)
 		}
@@ -171,16 +176,24 @@ func (s Scene) checkStep(st Step) error {
 		return errors.New("focus and marks need a code scene")
 	case (st.Box != nil || st.Arrow != nil) && s.Image == "":
 		return errors.New("box and arrow need an image scene")
+	case st.Zoom != nil && s.Clip == "":
+		return errors.New("zoom needs a clip scene")
 	case slices.Contains(st.Marks, ""):
 		return errors.New("empty mark")
-	case st.Box != nil && (len(st.Box) != 4 || st.Box[0] < 0 ||
-		st.Box[1] < 0 || st.Box[2] < 1 || st.Box[3] < 1):
+	case st.Box != nil && !isRegion(st.Box):
 		return errors.New("box: want [x, y, w, h] in image pixels")
+	case st.Zoom != nil && !isRegion(st.Zoom):
+		return errors.New("zoom: want [x, y, w, h] in the clip's pixels")
 	case st.Arrow != nil && (len(st.Arrow) != 2 || st.Arrow[0] < 0 ||
 		st.Arrow[1] < 0):
 		return errors.New("arrow: want [x, y] in image pixels")
 	}
 	return checkRange("focus", st.Focus)
+}
+
+// isRegion reports whether r is [x, y, w, h], placed and not empty.
+func isRegion(r []int) bool {
+	return len(r) == 4 && r[0] >= 0 && r[1] >= 0 && r[2] >= 1 && r[3] >= 1
 }
 
 // decimate is whether a clip drops its idle frames: yes unless told,
@@ -208,7 +221,8 @@ func (s Scene) parts() []Step {
 const scriptHelp = `
 script.json: one object
   title    string  the video's title (and its first chapter's name)
-  voice    object  voice, tempo, model, instructions; defaults are tuned
+  voice    object  name (demo voices), instructions, tempo, model;
+                   defaults are tuned
   scenes   array   played in order, each with one picture:
     clip     path    any video; from, to: seconds to keep. Idle frames
                      go (decimate: false keeps them, for real footage),
@@ -231,7 +245,9 @@ script.json: one object
                      code: focus: [from, to] lights lines, marks: [text]
                      boxes text in them; image (in its pixels): box:
                      [x, y, w, h] spotlights a region, arrow: [x, y]
-                     points at a spot; term: one step per command
+                     points at a spot; clip (in its pixels): zoom:
+                     [x, y, w, h] fills the frame with a region, eased
+                     in; term: one step per command
     voice    object  this scene's voice, over the script's
     secs     number  minimum length; needed when nothing is said
     chapter  string  starts a chapter here
@@ -606,7 +622,32 @@ func (b *builder) speak(ctx context.Context) error {
 		}
 		at += t.Length
 	}
+
+	if share := slideShare(scenes, b.timings); share > maxSlideShare {
+		fmt.Fprintf(os.Stderr, "demo: slides fill %.0f%% of the video: "+
+			"while talking, show the real thing (the app, a terminal, "+
+			"the code); slides are accents\n", 100*share)
+	}
 	return nil
+}
+
+// maxSlideShare is how much of a video slides may fill before build
+// warns: past it, it's a slideshow read aloud, not a demo.
+const maxSlideShare = 0.4
+
+// slideShare is the part of scenes' length that slides fill.
+func slideShare(scenes []Scene, timings []timing) float64 {
+	var slides, total float64
+	for i, s := range scenes {
+		if s.Slide != nil {
+			slides += timings[i].Length
+		}
+		total += timings[i].Length
+	}
+	if total == 0 {
+		return 0
+	}
+	return slides / total
 }
 
 // scenePath names a scene's intermediate file in the work dir.
@@ -639,7 +680,7 @@ func (b *builder) sceneVideo(ctx context.Context, i int) error {
 	out := b.scenePath(i, "mp4")
 
 	if s.Clip != "" {
-		return b.clipScene(ctx, i, s, t.Length, out)
+		return b.clipScene(ctx, i, s, t, out)
 	}
 
 	shots, err := b.drawnShots(ctx, i, s, t)
@@ -734,16 +775,30 @@ func imageShots(s Scene, n int, cuts []int) (shots, error) {
 
 // clipScene fast-cuts a recording: idle frames go (mpdecimate, unless
 // decimate is off), then it's sped up to fit the narration, or holds
-// its last frame. With audio, its sound is cut and sped up alike.
-func (b *builder) clipScene(ctx context.Context, i int, s Scene,
-	length float64, out string) error {
+// its last frame, zoomed where steps say. With audio, its sound is cut
+// and sped up alike.
+func (b *builder) clipScene(ctx context.Context, i int, s Scene, t timing,
+	out string) error {
+
+	length := t.Length
+	views, err := clipViews(ctx, s)
+	if err != nil {
+		return err
+	}
+
+	from, to := s.From, s.To
+	if s.Audio {
+		if from, to, err = quietCuts(ctx, s); err != nil {
+			return err
+		}
+	}
 
 	var cut []string
-	if s.From > 0 {
-		cut = append(cut, "-ss", ftoa(s.From))
+	if from > 0 {
+		cut = append(cut, "-ss", ftoa(from))
 	}
-	if s.To > 0 {
-		cut = append(cut, "-to", ftoa(s.To))
+	if to > 0 {
+		cut = append(cut, "-to", ftoa(to))
 	}
 
 	// Pass 1: only frames where something changed, back to back
@@ -780,6 +835,10 @@ func (b *builder) clipScene(ctx context.Context, i int, s Scene,
 	vf = fmt.Sprintf("setpts=PTS/%s,tpad=stop_mode=clone:stop_duration=%s,"+
 		"fps=%d,trim=end_frame=%d,setpts=PTS-STARTPTS",
 		ftoa(speed), ftoa(length), fps, frameCount(length))
+
+	if views != nil {
+		vf += "," + zoomFilter(views, t.cutFrames(), frameCount(length))
+	}
 
 	err = ffmpeg(ctx, "", nil, append([]string{"-i", busy, "-vf", vf},
 		append(b.codec, out)...)...)

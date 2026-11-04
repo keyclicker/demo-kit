@@ -55,14 +55,7 @@ func cmdFrames(args []string) error {
 		return fmt.Errorf("%s: no length", video)
 	}
 
-	step := *every
-	if step <= 0 {
-		step = math.Max(1, math.Ceil(length/autoTiles))
-	}
-	var times []float64
-	for t := step / 2; t < length; t += step {
-		times = append(times, t)
-	}
+	times := frameTimes(length, *every)
 
 	work, err := os.MkdirTemp("", "demo-frames-")
 	if err != nil {
@@ -89,7 +82,23 @@ func cmdFrames(args []string) error {
 	return nil
 }
 
-// sheetPath is ~/tmp/demo/<the video's folder>-frames.png.
+// frameTimes is when to grab frames from a video length long: the
+// middle of every step seconds (0: about autoTiles of them), never in
+// its last half second, where a seek finds no frame.
+func frameTimes(length, step float64) []float64 {
+	if step <= 0 {
+		step = math.Max(1, math.Ceil(length/autoTiles))
+	}
+
+	var times []float64
+	for t := step / 2; t < length-0.5; t += step {
+		times = append(times, t)
+	}
+	return times
+}
+
+// sheetPath is ~/tmp/demo/<name>-frames.png: a demo.mp4 is named for its
+// folder, any other video (a preview, a recording) for itself.
 func sheetPath(video string) (string, error) {
 	dir, err := scratchDir()
 	if err != nil {
@@ -99,8 +108,11 @@ func sheetPath(video string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	name := filepath.Base(filepath.Dir(abs)) + "-frames.png"
-	return filepath.Join(dir, name), nil
+	name := strings.TrimSuffix(filepath.Base(abs), filepath.Ext(abs))
+	if name == "demo" {
+		name = filepath.Base(filepath.Dir(abs))
+	}
+	return filepath.Join(dir, name+"-frames.png"), nil
 }
 
 // grabFrames decodes the frames at times, tile-wide, in parallel.

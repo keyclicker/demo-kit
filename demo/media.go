@@ -61,6 +61,22 @@ func probeDuration(ctx context.Context, path string) (float64, error) {
 	return strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
 }
 
+// probeSize is a video's (first video stream's) frame size.
+func probeSize(ctx context.Context, path string) (w, h int, err error) {
+	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error",
+		"-select_streams", "v:0", "-show_entries", "stream=width,height",
+		"-of", "csv=p=0:s=x", path).Output()
+	if err != nil {
+		return 0, 0, fmt.Errorf("ffprobe %s: %w", path, err)
+	}
+
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(out)), "%dx%d", &w,
+		&h); err != nil {
+		return 0, 0, fmt.Errorf("%s: no video size: %w", path, err)
+	}
+	return w, h, nil
+}
+
 // Chapter is one chapter of a finished video, in seconds.
 type Chapter struct {
 	Title      string
