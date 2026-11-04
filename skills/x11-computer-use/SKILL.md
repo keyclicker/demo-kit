@@ -25,7 +25,9 @@ Too sluggish or broken there? Use the user's `:0`, claimed first:
 
 - Prefix every command: `DISPLAY=:10 …` (shell state doesn't persist)
 - Start apps detached: `DISPLAY=:10 setsid -f xterm`
-- Never open Ghostty: it joins the user's tmux, your keys hit their shell
+- Terminal: Ghostty with the `demo` skill's `ghostty.conf` (own
+  instance, no user config, no tmux). Plain `ghostty` may open in the
+  user's Ghostty on `:0` and join their tmux: your keys hit their shell
 - Browsers: fresh profile (`--user-data-dir=$(mktemp -d)`), else they
   may open in the user's running instance on `:0`
 

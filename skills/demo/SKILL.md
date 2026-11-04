@@ -49,9 +49,15 @@ display (1280x960):
 - **Web**: dev server + `agent-chromium start -display $D URL`
 - **Android**: the emulator window on the desk display, or
   `adb shell screenrecord` → a clip
-- **TUI/CLI**: `DISPLAY=$D setsid -f xterm -fa Monospace -fs 14`
-  (opens maximized), type with `xdotool type` so viewers see the
-  command; a plain bash with a short prompt reads best
+- **TUI/CLI**: Ghostty, opens maximized with a plain title bar:
+
+  ```sh
+  DISPLAY=$D setsid -f ghostty --config-default-files=false \
+    --config-file=$HOME/projects/demo-kit/skills/demo/ghostty.conf \
+    -e bash --norc -i      # a short prompt reads best: PS1='$ '
+  ```
+
+  Type with `xdotool type` so viewers see the command
 - **Desktop apps**: launch on `$D`
 
 Act at a normal pace and don't wait for the viewer: idle frames are
@@ -71,8 +77,11 @@ demo code -diff -- origin/master...HEAD -- desk/     # list hunks
 
 Point at what you talk about: give a code scene `steps` instead of
 `say`. Each step's line is spoken while its `focus` lines are lit
-(the rest fades) and scrolled into view. A step without `focus` keeps
-the last view. Focus works on one file per scene.
+(the rest fades) and its `marks` (text inside them: a call, a name)
+are boxed. The view cuts to the focus; `"scroll": "smooth"` on the
+`code` eases instead. A step without `focus` keeps the last view.
+Focus works on one file per scene; a mark that matches nothing is an
+error. Preview a step: `demo code ... -focus A-B -mark TEXT`.
 
 ## 4. Write the script
 
@@ -89,7 +98,8 @@ the last view. Focus works on one file per scene.
     {"chapter": "Code",
      "code": {"file": "desk/rec.go", "lines": [440, 480]},
      "steps": [
-       {"say": "Signals drive the recorder...", "focus": [452, 462]},
+       {"say": "Signals drive the recorder...", "focus": [452, 462],
+        "marks": ["recPause", "r.resume()"]},
        {"say": "And when its agent exits...", "focus": [464, 466]}]},
     {"say": "...", "code": {"diff": ["origin/master...HEAD", "--",
        "demo/build.go"], "hunks": [2]}},
@@ -99,8 +109,8 @@ the last view. Focus works on one file per scene.
 ```
 
 - One picture per scene: `clip` (+ `from`/`to`), `image` (tall ones
-  scroll), or `code`: `file` or `diff` (`git diff` args), then
-  `hunks` (as `demo code -diff` numbers them) and `lines` [from, to]
+  page), or `code`: `file` or `diff` (`git diff` args), then `hunks`
+  (as `demo code -diff` numbers them) and `lines` [from, to]
 - `chapter` starts a chapter; scenes without one continue it
 - `secs`: a minimum length; required for a scene with nothing said
 - `voice`: `{"voice": "Puck", "tempo": 1.2, "model": "...",
