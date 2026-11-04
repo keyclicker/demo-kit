@@ -21,7 +21,12 @@ from `demo build`'s output; everything else is in the video:
 - https://node/files/demos/demo-kit-desk-rec/demo.mp4
 - 1:09, built in 10 s
 - speech $0.017
+- PR: https://github.com/owner/repo/pull/12
+- commit: https://github.com/owner/repo/commit/4c33fe7
 ```
+
+PR and commit lines only when the demo shows a change: links, never
+bare numbers or hashes.
 
 After that, chat as usual, in text, unless the user asks for
 demos-only for the whole chat. Never post demos on GitHub.
