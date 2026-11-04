@@ -19,9 +19,9 @@ import (
 
 // ---- Voice ----
 
-// Voice is how narration sounds. The defaults: Gemini 3.8 Flash TTS
-// (the lite model won a 17-voice benchmark for male + fast + cheap;
-// flash sounds better for a few cents more), voice Puck.
+// Voice is how narration sounds. The defaults: Gemini 3.8 Flash TTS,
+// voice Umbriel; Puck is the second choice. Flash, never lite: lite is
+// cheaper, but these demos are listened to.
 type Voice struct {
 	Model        string  `json:"model,omitempty"`
 	Name         string  `json:"voice,omitempty"`
@@ -31,7 +31,7 @@ type Voice struct {
 
 var defaultVoice = Voice{
 	Model: "google/gemini-3.8-flash-tts",
-	Name:  "Puck",
+	Name:  "Umbriel",
 	Instructions: "Adult male voice. Fast, energetic pacing, like a " +
 		"podcast host. Casual, dry-humored. Not whispery, not intimate.",
 	Tempo: 1.2,
