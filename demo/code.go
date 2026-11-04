@@ -828,6 +828,10 @@ func cmdCode(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// What's in it first: drawing a long diff takes a few seconds
+	printListing(l)
+
 	r, err := drawListing(l, focusRange)
 	if err != nil {
 		return err
@@ -846,7 +850,6 @@ func cmdCode(args []string) error {
 	}
 
 	fmt.Println(path)
-	printListing(l)
 	return nil
 }
 
