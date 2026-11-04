@@ -24,7 +24,7 @@ import (
 // cheaper, but these demos are listened to.
 type Voice struct {
 	Model        string  `json:"model,omitempty"`
-	Name         string  `json:"voice,omitempty"`
+	Name         string  `json:"name,omitempty"`
 	Instructions string  `json:"instructions,omitempty"`
 	Tempo        float64 `json:"tempo,omitempty"` // speed-up, pitch kept
 }
@@ -195,6 +195,10 @@ func cmdSay(args []string) error {
 	}
 	fs.Parse(args)
 
+	if err := checkVoice(*v); err != nil {
+		return err
+	}
+
 	text, err := readText(fs.Args(), os.Stdin)
 	if err != nil {
 		return err
@@ -241,7 +245,7 @@ func voiceFlags(fs *flag.FlagSet) *Voice {
 	v := defaultVoice
 	fs.StringVar(&v.Model, "model", v.Model, "OpenRouter TTS model")
 	fs.StringVar(&v.Name, "voice", v.Name,
-		"voice name, provider-specific; empty: model default")
+		"voice name (demo voices); empty: model default")
 	fs.StringVar(&v.Instructions, "instructions", v.Instructions,
 		"delivery direction (Gemini, Fish, OpenAI); empty: none")
 	fs.Float64Var(&v.Tempo, "tempo", v.Tempo,

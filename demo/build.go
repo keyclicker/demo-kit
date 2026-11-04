@@ -111,6 +111,9 @@ func loadScript(path string) (*Script, error) {
 		}
 		sc.Voice = &v
 
+		if err := checkVoice(v); err != nil {
+			return nil, fmt.Errorf("scene %d: %w", sc.num, err)
+		}
 		if err := sc.check(); err != nil {
 			return nil, fmt.Errorf("scene %d: %w", sc.num, err)
 		}
@@ -218,7 +221,8 @@ func (s Scene) parts() []Step {
 const scriptHelp = `
 script.json: one object
   title    string  the video's title (and its first chapter's name)
-  voice    object  voice, tempo, model, instructions; defaults are tuned
+  voice    object  name (demo voices), instructions, tempo, model;
+                   defaults are tuned
   scenes   array   played in order, each with one picture:
     clip     path    any video; from, to: seconds to keep. Idle frames
                      go (decimate: false keeps them, for real footage),

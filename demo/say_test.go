@@ -55,3 +55,21 @@ func TestKeyLocks(t *testing.T) {
 	a.Unlock()
 	k.lock("x").Unlock() // reusable once unlocked
 }
+
+func TestCheckVoice(t *testing.T) {
+	gemini := defaultVoice
+	for name, ok := range map[string]bool{
+		"Umbriel": true, "Charon": true, "": true, "Bogus": false,
+		"umbriel": false,
+	} {
+		gemini.Name = name
+		if err := checkVoice(gemini); (err == nil) != ok {
+			t.Errorf("%q: %v", name, err)
+		}
+	}
+
+	// Other models' names aren't known here: they pass
+	if err := checkVoice(Voice{Model: "x/kokoro", Name: "am_michael"}); err != nil {
+		t.Errorf("kokoro: %v", err)
+	}
+}
