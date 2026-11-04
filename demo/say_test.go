@@ -23,10 +23,10 @@ func TestReadText(t *testing.T) {
 }
 
 func TestVoiceDefaults(t *testing.T) {
-	v := Voice{Name: "Charon"}.withDefaults()
+	v := Voice{Name: "Charon"}.over(defaultVoice)
 	if v.Name != "Charon" || v.Model != defaultVoice.Model ||
 		v.Tempo != defaultVoice.Tempo {
-		t.Fatalf("withDefaults = %+v", v)
+		t.Fatalf("over = %+v", v)
 	}
 }
 

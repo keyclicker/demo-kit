@@ -87,7 +87,8 @@ func TestPickHunks(t *testing.T) {
 }
 
 func TestWrapTokens(t *testing.T) {
-	rows := wrapTokens([]run{{"abcd", colText}, {"efg", colAdd}}, 3)
+	runs := []run{{text: "abcd", col: colText}, {text: "efg", col: colAdd}}
+	rows := wrapTokens(runs, 3)
 	var got []string
 	for _, r := range rows {
 		s := ""
@@ -125,11 +126,11 @@ func TestDrawListing(t *testing.T) {
 }
 
 func TestParseHunkList(t *testing.T) {
-	if got, err := parseHunkList("1, 3"); err != nil || len(got) != 2 ||
+	if got, err := parseList("hunks", "1, 3"); err != nil || len(got) != 2 ||
 		got[1] != 3 {
 		t.Fatalf("got %v %v", got, err)
 	}
-	if _, err := parseHunkList("0"); err == nil {
+	if _, err := parseList("hunks", "0"); err == nil {
 		t.Fatal("accepted hunk 0")
 	}
 }

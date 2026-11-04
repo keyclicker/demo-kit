@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	_ "embed"
 	"fmt"
@@ -9,7 +8,6 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
-	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,8 +21,6 @@ import (
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/opentype"
-	"golang.org/x/image/math/fixed"
 )
 
 // Code is drawn, not recorded: a source file or a git diff becomes a
@@ -403,30 +399,14 @@ func btoi(b bool) int {
 
 // ---- Rendering ----
 
-// JetBrains Mono 2.304 (OFL, fonts/OFL.txt), embedded: no font to
-// install, same look on every machine
-var (
-	//go:embed fonts/JetBrainsMono-Regular.ttf
-	monoRegular []byte
-
-	//go:embed fonts/JetBrainsMono-Bold.ttf
-	monoBold []byte
-)
-
 // Layout, in pixels, for a 1280-wide frame
 const (
-	frameW, frameH = 1280, 960
-
 	margin   = 24
 	fileRowH = 52
 	hunkRowH = 38
 	gapH     = 14
 	tabWidth = 4
 	focusBar = 6
-
-	// maxListingH caps a drawing (~1000 lines): no scene shows more,
-	// and beyond it memory runs away
-	maxListingH = 30 * frameH
 )
 
 // metrics size the code text. Advances are whole pixels at these sizes
@@ -442,40 +422,13 @@ var (
 	splitMetrics   = metrics{fontSize: 15, rowH: 22, margin: 12}
 )
 
-// Dark palette, GitHub-like, to sit with chroma's github-dark
-var (
-	colBG       = rgb(0x0d1117)
-	colFileBG   = rgb(0x161b22)
-	colHunkBG   = rgb(0x111d2e)
-	colAddBG    = rgb(0x12261e)
-	colDelBG    = rgb(0x2d1215)
-	colText     = rgb(0xe6edf3)
-	colDim      = rgb(0x7d8590)
-	colAdd      = rgb(0x3fb950)
-	colDel      = rgb(0xf85149)
-	colHunkText = rgb(0x79c0ff)
-	colFocus    = rgb(0xf0b72f)
-
-	// A mark: a translucent box behind the text, underlined
-	colMark = color.NRGBA{0xf0, 0xb7, 0x2f, 0x40}
-
-	// Out-of-focus lines fade toward the background
-	colFade = color.NRGBA{0x0d, 0x11, 0x17, 0xb0}
-)
-
-func rgb(hex uint32) color.RGBA {
-	return color.RGBA{uint8(hex >> 16), uint8(hex >> 8), uint8(hex), 0xff}
-}
-
 // render is a drawn listing: the image, and where each line landed.
 type render struct {
 	Img  *image.RGBA
 	rows map[int][2]int // Pos → [top, bottom) y
 }
 
-// focusY is the scroll offset that centers lines [from, to] in a
-// frame, clamped to the image; a range taller than the frame shows
-// its top.
+// focusY is the view top that centers lines [from, to] (centerY).
 func (r *render) focusY(from, to int) int {
 	top, bottom := -1, 0
 	for pos, span := range r.rows {
@@ -489,12 +442,7 @@ func (r *render) focusY(from, to int) int {
 	if top < 0 {
 		return 0
 	}
-
-	y := (top+bottom)/2 - frameH/2
-	if bottom-top > frameH-2*margin {
-		y = top - margin
-	}
-	return min(max(y, 0), r.Img.Bounds().Dy()-frameH)
+	return centerY(top, bottom, r.Img.Bounds().Dy())
 }
 
 // highlight is what a step points at: Focus lines [from, to] get a
@@ -519,17 +467,9 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 		m = splitMetrics
 	}
 
-	regular, err := loadFace(monoRegular, m.fontSize)
-	if err != nil {
-		return nil, err
-	}
-	bold, err := loadFace(monoBold, m.fontSize)
-	if err != nil {
-		return nil, err
-	}
-
-	p := &painter{listing: l, face: regular, bold: bold, hl: hl,
-		rowH: m.rowH, marked: map[string]bool{}}
+	regular := monoFace(false, m.fontSize)
+	p := &painter{listing: l, face: regular, bold: monoFace(true, m.fontSize),
+		hl: hl, rowH: m.rowH, marked: map[string]bool{}}
 	p.adv = font.MeasureString(regular, "M").Round()
 
 	if l.Split {
@@ -543,13 +483,11 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 	// ---- Measure, then draw ----
 
 	height := p.layout(nil)
-	if height > maxListingH {
+	if height > maxDrawH {
 		return nil, fmt.Errorf("%d px tall, over %d: narrow it with "+
-			"lines or hunks", height, maxListingH)
+			"lines or hunks", height, maxDrawH)
 	}
-	p.img = image.NewRGBA(image.Rect(0, 0, frameW, max(height, frameH)))
-	draw.Draw(p.img, p.img.Bounds(), image.NewUniform(colBG),
-		image.Point{}, draw.Src)
+	p.img = newCanvas(height)
 	p.rows = map[int][2]int{}
 	p.layout(p.img)
 
@@ -574,30 +512,6 @@ func anyIn(rows map[int][2]int, from, to int) bool {
 		}
 	}
 	return false
-}
-
-// savePNG writes img to path.
-func savePNG(img image.Image, path string) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	w := bufio.NewWriter(f)
-	if err := png.Encode(w, img); err != nil {
-		return err
-	}
-	return w.Flush()
-}
-
-func loadFace(ttf []byte, size float64) (font.Face, error) {
-	parsed, err := opentype.Parse(ttf)
-	if err != nil {
-		return nil, err
-	}
-	return opentype.NewFace(parsed, &opentype.FaceOptions{
-		Size: size, DPI: 72, Hinting: font.HintingFull})
 }
 
 // pane is a column of code: the whole frame, or one side of a split.
@@ -645,7 +559,7 @@ func (p *painter) layout(img *image.RGBA) int {
 
 		if f.Binary {
 			if img != nil {
-				p.text(img, p.face, margin, y, p.rowH, "binary file", colDim)
+				drawText(img, p.face, margin, y, p.rowH, "binary file", colDim)
 			}
 			y += p.rowH + gapH
 			continue
@@ -772,26 +686,26 @@ func mergeSpan(rows map[int][2]int, pos, top, bottom int) [2]int {
 // their colors, or the shown line range.
 func (p *painter) fileHeader(img *image.RGBA, y int, f *codeFile) {
 	fill(img, 0, y, frameW, fileRowH, colFileBG)
-	x := p.text(img, p.bold, margin, y, fileRowH, f.Path, colText)
+	x := drawText(img, p.bold, margin, y, fileRowH, f.Path, colText)
 
 	if p.listing.Tree {
-		p.text(img, p.face, x, y, fileRowH, "  "+f.Status, colDim)
+		drawText(img, p.face, x, y, fileRowH, "  "+f.Status, colDim)
 		return
 	}
 
 	if !p.listing.Diff {
 		lines := f.Hunks[0].Lines
-		p.text(img, p.face, x, y, fileRowH, fmt.Sprintf("  lines %d-%d",
+		drawText(img, p.face, x, y, fileRowH, fmt.Sprintf("  lines %d-%d",
 			lines[0].Pos, lines[len(lines)-1].Pos), colDim)
 		return
 	}
 
 	if f.Status != "" {
-		x = p.text(img, p.face, x, y, fileRowH, "  "+f.Status, colDim)
+		x = drawText(img, p.face, x, y, fileRowH, "  "+f.Status, colDim)
 	}
-	x = p.text(img, p.face, x, y, fileRowH, fmt.Sprintf("  +%d", f.Adds),
+	x = drawText(img, p.face, x, y, fileRowH, fmt.Sprintf("  +%d", f.Adds),
 		colAdd)
-	p.text(img, p.face, x, y, fileRowH, fmt.Sprintf(" -%d", f.Dels), colDel)
+	drawText(img, p.face, x, y, fileRowH, fmt.Sprintf(" -%d", f.Dels), colDel)
 }
 
 // hunkHeader draws a diff hunk's numbered header row.
@@ -802,7 +716,7 @@ func (p *painter) hunkHeader(img *image.RGBA, y int, h *hunk) {
 	if h.Context != "" {
 		label += "  " + h.Context
 	}
-	p.text(img, p.bold, margin, y, hunkRowH,
+	drawText(img, p.bold, margin, y, hunkRowH,
 		clip(label, (frameW-2*margin)/p.adv), colHunkText)
 }
 
@@ -830,8 +744,8 @@ func (p *painter) codeLine(img *image.RGBA, pn pane, y, h int, l codeLine,
 	}
 
 	gx := pn.x + pn.margin
-	p.text(img, p.face, gx, y, p.rowH, fmt.Sprintf("%5d", num), colDim)
-	p.text(img, p.face, gx+6*p.adv, y, p.rowH, mark, markCol)
+	drawText(img, p.face, gx, y, p.rowH, fmt.Sprintf("%5d", num), colDim)
+	drawText(img, p.face, gx+6*p.adv, y, p.rowH, mark, markCol)
 
 	if inFocus {
 		p.marks(img, pn, y, l.Text)
@@ -840,7 +754,7 @@ func (p *painter) codeLine(img *image.RGBA, pn pane, y, h int, l codeLine,
 	for i, row := range rows {
 		x := pn.codeX
 		for _, t := range row {
-			x = p.text(img, p.face, x, y+i*p.rowH, p.rowH, t.text, t.col)
+			x = drawText(img, p.face, x, y+i*p.rowH, p.rowH, t.text, t.col)
 		}
 	}
 
@@ -851,8 +765,7 @@ func (p *painter) codeLine(img *image.RGBA, pn pane, y, h int, l codeLine,
 	case inFocus:
 		fill(img, pn.x, y, focusBar, h, colFocus)
 	default:
-		draw.Draw(img, image.Rect(pn.x, y, pn.x+pn.w, y+h),
-			image.NewUniform(colFade), image.Point{}, draw.Over)
+		fade(img, image.Rect(pn.x, y, pn.x+pn.w, y+h))
 	}
 }
 
@@ -895,40 +808,13 @@ func (p *painter) markCells(img *image.RGBA, pn pane, y, from, to int) {
 	}
 }
 
-// text draws s vertically centered in a row of height h at y, and
-// returns the x after it.
-func (p *painter) text(img *image.RGBA, face font.Face, x, y, h int,
-	s string, c color.Color) int {
-
-	m := face.Metrics()
-	base := y + (h+m.Ascent.Round()-m.Descent.Round())/2
-
-	d := font.Drawer{Dst: img, Src: image.NewUniform(c), Face: face,
-		Dot: fixed.P(x, base)}
-	d.DrawString(s)
-	return d.Dot.X.Round()
-}
-
-func fill(img *image.RGBA, x, y, w, h int, c color.Color) {
-	draw.Draw(img, image.Rect(x, y, x+w, y+h), image.NewUniform(c),
-		image.Point{}, draw.Src)
-}
-
-// clip cuts s to n runes, marking the cut.
-func clip(s string, n int) string {
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
-	}
-	return string(runes[:n-1]) + "…"
-}
-
 // ---- Highlighting ----
 
 // run is a stretch of text in one color.
 type run struct {
 	text string
 	col  color.Color
+	bold bool // terminal output only: code is drawn in one weight
 }
 
 var codeStyle = styles.Get("github-dark")
@@ -987,7 +873,7 @@ func highlightLines(lexer chroma.Lexer, lines []string) [][]run {
 	it, err := lexer.Tokenise(nil, text)
 	if err != nil {
 		for i, l := range lines {
-			out[i] = []run{{l, colText}}
+			out[i] = []run{{text: l, col: colText}}
 		}
 		return out
 	}
@@ -1005,7 +891,7 @@ func highlightLines(lexer chroma.Lexer, lines []string) [][]run {
 				line++
 			}
 			if part != "" && line < len(out) {
-				out[line] = append(out[line], run{part, col})
+				out[line] = append(out[line], run{text: part, col: col})
 			}
 		}
 	}
@@ -1028,7 +914,9 @@ func wrapTokens(runs []run, cols int) [][]run {
 
 			n := min(len(rest), cols-used)
 			last := len(rows) - 1
-			rows[last] = append(rows[last], run{string(rest[:n]), t.col})
+			piece := t
+			piece.text = string(rest[:n])
+			rows[last] = append(rows[last], piece)
 			rest, used = rest[n:], used+n
 		}
 	}
@@ -1082,7 +970,7 @@ func cmdCode(args []string) error {
 	}
 
 	var err error
-	if spec.Hunks, err = parseHunkList(*picks); err != nil {
+	if spec.Hunks, err = parseList("hunks", *picks); err != nil {
 		return err
 	}
 	if spec.Lines, err = parseLineRange("lines", *lines); err != nil {
@@ -1167,13 +1055,16 @@ func parseLineRange(name, s string) ([]int, error) {
 	return []int{from, to}, nil
 }
 
-// parseHunkList parses "1,3,4".
-func parseHunkList(s string) ([]int, error) {
+// parseList parses "1,3,4", flag --name's value; empty is nil.
+func parseList(name, s string) ([]int, error) {
 	var out []int
-	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' }) {
+	for _, f := range strings.Split(s, ",") {
+		if s == "" {
+			break
+		}
 		n, err := strconv.Atoi(strings.TrimSpace(f))
 		if err != nil || n < 1 {
-			return nil, fmt.Errorf("--hunks %q: want numbers like 1,3", s)
+			return nil, fmt.Errorf("--%s %q: want numbers like 1,3", name, s)
 		}
 		out = append(out, n)
 	}

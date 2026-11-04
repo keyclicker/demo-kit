@@ -61,10 +61,43 @@ func TestLoadScript(t *testing.T) {
 		t.Fatalf("voice defaults missing: %+v", s.Voice)
 	}
 
+	// A scene's voice goes over the script's; steps fit any picture
+	os.WriteFile(path, []byte(`{"voice": {"voice": "Charon"}, "scenes": [
+		{"say": "a", "slide": {"title": "T"}, "voice": {"tempo": 1.5}},
+		{"say": "b", "compare": [{"image": "x.png"}, {"image": "y.png"}]},
+		{"clip": "a.mp4", "audio": true, "steps": [{"say": "c"}]},
+		{"image": "i.png", "steps": [{"say": "d", "box": [1, 2, 3, 4]}]},
+		{"term": {"run": ["ls", "pwd"]}, "steps": [{"say": "e"}, {"say": "f"}]}]}`),
+		0o644)
+	if s, err = loadScript(path); err != nil {
+		t.Fatal(err)
+	}
+	if v := s.Scenes[0].Voice; v.Name != "Charon" || v.Tempo != 1.5 ||
+		v.Model != defaultVoice.Model {
+		t.Fatalf("scene voice: %+v", v)
+	}
+	if v := s.Scenes[1].Voice; v.Tempo != defaultVoice.Tempo {
+		t.Fatalf("inherited voice: %+v", v)
+	}
+	if s.Scenes[1].Compare[0].Image != filepath.Join(dir, "x.png") {
+		t.Fatalf("pane not resolved: %s", s.Scenes[1].Compare[0].Image)
+	}
+	if s.Scenes[2].decimate() {
+		t.Fatal("audio kept decimate on")
+	}
+
 	bad := map[string]string{
 		"two sources": `{"scenes": [{"say": "x", "clip": "a", "image": "b"}]}`,
 		"say + steps": `{"scenes": [{"say": "x", "code": {"file": "a"}, "steps": [{"say": "y"}]}]}`,
-		"clip steps":  `{"scenes": [{"clip": "a", "steps": [{"say": "y"}]}]}`,
+		"clip focus":  `{"scenes": [{"clip": "a", "steps": [{"say": "y", "focus": [1, 2]}]}]}`,
+		"code box":    `{"scenes": [{"code": {"file": "a"}, "steps": [{"say": "y", "box": [0, 0, 5, 5]}]}]}`,
+		"bad box":     `{"scenes": [{"image": "a", "steps": [{"say": "y", "box": [0, 0, 5]}]}]}`,
+		"image from":  `{"scenes": [{"say": "x", "image": "a", "from": 2}]}`,
+		"audio + dec": `{"scenes": [{"say": "x", "clip": "a", "audio": true, "decimate": true}]}`,
+		"term steps":  `{"scenes": [{"term": {"run": ["a", "b"]}, "steps": [{"say": "y"}]}]}`,
+		"term empty":  `{"scenes": [{"say": "x", "term": {"run": []}}]}`,
+		"two slides":  `{"scenes": [{"say": "x", "slide": {"title": "a", "end": "b"}}]}`,
+		"one pane":    `{"scenes": [{"say": "x", "compare": [{"image": "a"}]}]}`,
 		"bad focus":   `{"scenes": [{"code": {"file": "a"}, "steps": [{"say": "y", "focus": [3]}]}]}`,
 		"empty mark":  `{"scenes": [{"code": {"file": "a"}, "steps": [{"say": "y", "marks": [""]}]}]}`,
 		"bad scroll":  `{"scenes": [{"say": "y", "code": {"file": "a", "scroll": "fast"}}]}`,
@@ -84,17 +117,6 @@ func TestConcatListQuotes(t *testing.T) {
 	got := concatList([]string{"/a/it's.mp4"})
 	if want := "file '/a/it'\\''s.mp4'\n"; got != want {
 		t.Fatalf("concatList = %q", got)
-	}
-}
-
-func TestPagedY(t *testing.T) {
-	// Fits: one page, stays at 0. Taller: pages pageStep apart
-	if got := pagedY(frameH, 6); got != "min(floor(t/6.000)*864,ih-oh)" {
-		t.Fatalf("one page: %s", got)
-	}
-	if got := pagedY(frameH+pageStep+1, 6); got !=
-		"min(floor(t/2.000)*864,ih-oh)" {
-		t.Fatalf("three pages: %s", got)
 	}
 }
 

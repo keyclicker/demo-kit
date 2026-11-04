@@ -1,10 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -22,8 +22,8 @@ const (
 )
 
 // ffmpeg runs ffmpeg quietly in dir (empty: here), overwriting
-// outputs, with stdin as input.
-func ffmpeg(ctx context.Context, dir string, stdin []byte,
+// outputs, with stdin (if any) as input.
+func ffmpeg(ctx context.Context, dir string, stdin io.Reader,
 	args ...string) error {
 
 	base := []string{"-loglevel", "error", "-y"}
@@ -40,7 +40,7 @@ func ffmpeg(ctx context.Context, dir string, stdin []byte,
 	cmd := exec.CommandContext(ctx, "ffmpeg", append(base, args...)...)
 	cmd.Dir = dir
 	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
+		cmd.Stdin = stdin
 	}
 
 	if msg, err := cmd.CombinedOutput(); err != nil {
