@@ -12,7 +12,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -217,11 +216,11 @@ func speedFor(clip, length float64) float64 {
 // ---- demo build ----
 
 // cmdBuild renders a script into one narrated, captioned mp4 with
-// chapters, in ~/public/demos by default.
+// chapters: demo.mp4 beside the script unless -o.
 func cmdBuild(args []string) error {
 	fs := flag.NewFlagSet("build", flag.ExitOnError)
-	out := fs.String("o", "", "video to write "+
-		"(default ~/public/demos/<time>-<title>.mp4)")
+	out := fs.String("o", "", "video to write (default demo.mp4 beside "+
+		"the script)")
 	keep := fs.Bool("keep", false, "keep the work dir (scenes, captions)")
 
 	fs.Usage = func() {
@@ -241,11 +240,10 @@ func cmdBuild(args []string) error {
 		return err
 	}
 
+	// A demo is a folder: script, result, artifacts (the demo skill)
 	video := *out
 	if video == "" {
-		if video, err = defaultVideoPath(script.Title); err != nil {
-			return err
-		}
+		video = filepath.Join(filepath.Dir(fs.Arg(0)), "demo.mp4")
 	}
 	if video, err = filepath.Abs(video); err != nil {
 		return err
@@ -761,22 +759,4 @@ func scratchDir() (string, error) {
 
 	dir := filepath.Join(home, "tmp", "demo")
 	return dir, os.MkdirAll(dir, 0o755)
-}
-
-var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
-
-// defaultVideoPath is ~/public/demos/<time>-<title>.mp4.
-func defaultVideoPath(title string) (string, error) {
-	public, err := publicDir()
-	if err != nil {
-		return "", err
-	}
-
-	name := time.Now().Format("2006-01-02-150405")
-	slug := slugRE.ReplaceAllString(strings.ToLower(title), "-")
-	if slug = strings.Trim(slug[:min(len(slug), 48)], "-"); slug != "" {
-		name += "-" + slug
-	}
-
-	return filepath.Join(public, "demos", name+".mp4"), nil
 }
