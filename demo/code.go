@@ -865,14 +865,14 @@ func wrapTokens(runs []run, cols int) [][]run {
 // lists what it drew: the preview of a code scene.
 func cmdCode(args []string) error {
 	fs := flag.NewFlagSet("code", flag.ExitOnError)
-	diff := fs.Bool("diff", false, "args are `git diff` args, not a file")
+	diff := fs.Bool("diff", false, "args are git diff args, not a file")
 	out := fs.String("o", "", "PNG to write (default ~/tmp/demo/code-<time>.png)")
 	unified := fs.Int("U", 3, "diff context lines")
 	picks := fs.String("hunks", "", "diff hunks to keep, e.g. 1,3 (default all)")
 	lines := fs.String("lines", "", "line range to keep, e.g. 120-160")
 	focus := fs.String("focus", "", "line range to highlight, e.g. 130-138")
 	var marks []string
-	fs.Func("mark", "text to box inside the focus (repeatable)",
+	fs.Func("mark", "`text` to box inside the focus (repeatable)",
 		func(s string) error { marks = append(marks, s); return nil })
 
 	fs.Usage = func() {

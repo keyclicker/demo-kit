@@ -93,7 +93,7 @@ func cmdNew(args []string) error {
 	fs := flag.NewFlagSet("new", flag.ExitOnError)
 	size := fs.String("size", "1280x960", "screen size, WxH")
 	noRec := fs.Bool("no-rec", false,
-		"don't record; `desk rec start` when you want to")
+		"don't record; desk rec start when you want to")
 	fs.Parse(args)
 
 	owner, err := callerOwner()
