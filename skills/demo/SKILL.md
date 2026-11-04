@@ -12,10 +12,10 @@ go.
 
 ## Replies
 
-The reply that delivers a demo is the video, its URL, a line at most:
-everything else is in the video. After that, chat as usual, in text,
-unless the user asks for demos-only for the whole chat. Never post
-demos on GitHub.
+The reply that delivers a demo is the video, its URL, and its speech
+cost (`demo build` prints it), a line at most: everything else is in
+the video. After that, chat as usual, in text, unless the user asks
+for demos-only for the whole chat. Never post demos on GitHub.
 
 ## Where files go
 
