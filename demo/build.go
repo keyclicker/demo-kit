@@ -156,7 +156,8 @@ script.json: one object
   scenes   array   played in order, each with one picture:
     clip   path    a recording; from, to: seconds to keep
     image  path    a still; taller than 4:3 pages through
-    code   object  file: path, or diff: [git diff args]; then
+    code   object  file: path, diff: [git diff args], or tree: dir
+                   (depth: levels, default 3); then
                    hunks: [n, ...], lines: [from, to],
                    split: true for a diff side by side,
                    scroll: "smooth" to ease between views

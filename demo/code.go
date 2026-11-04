@@ -39,6 +39,7 @@ type listing struct {
 	Files []*codeFile
 	Diff  bool // +/- markers, hunk headers, stats
 	Split bool // a diff side by side: old left, new right
+	Tree  bool // a file tree (tree.go), colored by entry kind
 }
 
 // codeFile is one file: of a diff, or a plain source excerpt (one
@@ -73,12 +74,14 @@ type codeLine struct {
 
 // ---- Sources ----
 
-// CodeSpec is what a code scene shows: File (plain source), or Diff
-// (`git diff` args); then optionally only Hunks, and new-side Lines
-// [from, to].
+// CodeSpec is what a code scene shows: File (plain source), Diff
+// (`git diff` args), or Tree (a directory, Depth levels deep); then
+// optionally only Hunks, and new-side Lines [from, to].
 type CodeSpec struct {
 	File    string   `json:"file,omitempty"`
 	Diff    []string `json:"diff,omitempty"`
+	Tree    string   `json:"tree,omitempty"`
+	Depth   int      `json:"depth,omitempty"` // tree depth, default 3
 	Hunks   []int    `json:"hunks,omitempty"`
 	Lines   []int    `json:"lines,omitempty"`
 	Context int      `json:"context,omitempty"` // diff context, default 3
@@ -92,13 +95,17 @@ type CodeSpec struct {
 
 // check rejects specs with no source, two, or a bad range.
 func (c CodeSpec) check() error {
+	sources := btoi(c.File != "") + btoi(c.Diff != nil) + btoi(c.Tree != "")
+
 	switch {
-	case (c.File == "") == (c.Diff == nil):
-		return fmt.Errorf("code: needs exactly one of file, diff")
-	case c.File != "" && len(c.Hunks) > 0:
+	case sources != 1:
+		return fmt.Errorf("code: needs exactly one of file, diff, tree")
+	case c.Diff == nil && len(c.Hunks) > 0:
 		return fmt.Errorf("code: hunks need a diff")
-	case c.File != "" && c.Split:
+	case c.Diff == nil && c.Split:
 		return fmt.Errorf("code: split needs a diff")
+	case c.Tree == "" && c.Depth != 0, c.Depth < 0:
+		return fmt.Errorf("code: depth needs a tree, and to be positive")
 	case c.Scroll != "" && c.Scroll != "smooth":
 		return fmt.Errorf(`code: scroll %q: want "smooth" or nothing`,
 			c.Scroll)
@@ -115,14 +122,17 @@ func checkRange(name string, r []int) error {
 }
 
 // load reads the spec's code, here: git runs in the current repo, and
-// File is relative to the current directory.
+// File and Tree are relative to the current directory.
 func (c CodeSpec) load(ctx context.Context) (*listing, error) {
 	var l *listing
 	var err error
 
-	if c.File != "" {
+	switch {
+	case c.File != "":
 		l, err = readSource(c.File)
-	} else {
+	case c.Tree != "":
+		l, err = readTree(ctx, c.Tree, c.Depth)
+	default:
 		l, err = readDiff(ctx, c)
 	}
 	if err != nil {
@@ -627,6 +637,9 @@ func (p *painter) layout(img *image.RGBA) int {
 			}
 
 			runs := highlightHunk(lexer, h)
+			if p.listing.Tree {
+				runs = treeRuns(h)
+			}
 			for _, row := range p.rowsOf(h) {
 				y += p.row(img, y, h, runs, row)
 			}
@@ -726,6 +739,11 @@ func (p *painter) row(img *image.RGBA, y int, h *hunk, runs [][]run,
 func (p *painter) fileHeader(img *image.RGBA, y int, f *codeFile) {
 	fill(img, 0, y, frameW, fileRowH, colFileBG)
 	x := p.text(img, p.bold, margin, y, fileRowH, f.Path, colText)
+
+	if p.listing.Tree {
+		p.text(img, p.face, x, y, fileRowH, "  "+f.Status, colDim)
+		return
+	}
 
 	if !p.listing.Diff {
 		lines := f.Hunks[0].Lines
@@ -986,12 +1004,14 @@ func wrapTokens(runs []run, cols int) [][]run {
 
 // ---- demo code ----
 
-// cmdCode draws a source file, or with -diff a git diff, as a PNG and
-// lists what it drew: the preview of a code scene.
+// cmdCode draws a source file (or with -diff a git diff, with -tree a
+// file tree) as a PNG and lists what it drew: a code scene's preview.
 func cmdCode(args []string) error {
 	fs := flag.NewFlagSet("code", flag.ExitOnError)
 	diff := fs.Bool("diff", false, "args are git diff args, not a file")
 	split := fs.Bool("split", false, "a diff side by side: old left, new right")
+	tree := fs.Bool("tree", false, "the arg is a directory: draw its file tree")
+	depth := fs.Int("depth", 0, "tree depth (default 3)")
 	out := fs.String("o", "", "PNG to write (default ~/tmp/demo/code-<time>.png)")
 	unified := fs.Int("U", 3, "diff context lines")
 	picks := fs.String("hunks", "", "diff hunks to keep, e.g. 1,3 (default all)")
@@ -1003,14 +1023,17 @@ func cmdCode(args []string) error {
 
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: demo code [flags] FILE\n"+
+			"       demo code -tree [-depth N] [flags] DIR\n"+
 			"       demo code -diff [flags] -- [git diff args]\n"+
 			"  e.g. demo code -diff -- origin/master...HEAD -- dir/\n")
 		fs.PrintDefaults()
 	}
 	fs.Parse(args)
 
-	spec := CodeSpec{Context: *unified, Split: *split}
-	if *diff {
+	spec := CodeSpec{Context: *unified, Split: *split, Depth: *depth}
+	if *tree && fs.NArg() == 1 {
+		spec.Tree = fs.Arg(0)
+	} else if *diff {
 		spec.Diff = fs.Args()
 		if spec.Diff == nil {
 			spec.Diff = []string{}
@@ -1066,11 +1089,18 @@ func cmdCode(args []string) error {
 	return nil
 }
 
-// printListing names what was drawn: numbered hunks, or line ranges.
+// printListing names what was drawn: numbered hunks, line ranges, or
+// for a tree its numbered lines (for focus and lines ranges).
 func printListing(l *listing) {
 	for _, f := range l.Files {
 		for _, h := range f.Hunks {
 			first, last := h.Lines[0].Pos, h.Lines[len(h.Lines)-1].Pos
+			if l.Tree {
+				for _, cl := range h.Lines {
+					fmt.Printf("%4d  %s\n", cl.Pos, cl.Text)
+				}
+				continue
+			}
 			if !l.Diff {
 				fmt.Printf("%s lines %d-%d\n", f.Path, first, last)
 				continue
