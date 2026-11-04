@@ -287,12 +287,13 @@ func cmdBuild(args []string) error {
 		defer os.RemoveAll(work)
 	}
 
+	start := time.Now()
 	b := &builder{script: script, work: work}
 	if err := b.build(ctx, video); err != nil {
 		return err
 	}
 
-	b.report(ctx, video)
+	b.report(ctx, video, time.Since(start))
 	return nil
 }
 
@@ -310,8 +311,6 @@ type builder struct {
 // build runs every stage: speech, scene videos, scene audio, then one
 // final encode with captions and chapters.
 func (b *builder) build(ctx context.Context, video string) error {
-	start := time.Now()
-
 	if err := b.speak(ctx); err != nil {
 		return err
 	}
@@ -372,13 +371,7 @@ func (b *builder) build(ctx context.Context, video string) error {
 		"-c:v", "h264_vaapi", "-qp", "24",
 		"-c:a", "aac", "-b:a", "128k",
 		"-movflags", "+faststart", video)
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintf(os.Stderr, "demo: built in %s\n",
-		time.Since(start).Round(100*time.Millisecond))
-	return nil
+	return err
 }
 
 // speak synthesizes every step of every scene in parallel (cached ones
@@ -731,8 +724,10 @@ func (b *builder) writeSidecars() error {
 	return nil
 }
 
-// report prints the video, its URL, chapters and the TTS cost.
-func (b *builder) report(ctx context.Context, video string) {
+// report prints the video, its URL, length and chapters, build time
+// and the TTS cost: what the reply delivering a demo states.
+func (b *builder) report(ctx context.Context, video string,
+	took time.Duration) {
 	fmt.Println(video)
 	if u, err := publicURL(ctx, video); err == nil {
 		fmt.Println(u)
@@ -745,6 +740,7 @@ func (b *builder) report(ctx context.Context, video string) {
 			fmt.Printf("  %s %s\n", clock(c.Start), c.Title)
 		}
 	}
+	fmt.Printf("built in %s\n", took.Round(100*time.Millisecond))
 
 	var ids []string
 	for _, scene := range b.speech {

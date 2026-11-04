@@ -12,10 +12,19 @@ go.
 
 ## Replies
 
-The reply that delivers a demo is the video, its URL, and its speech
-cost (`demo build` prints it), a line at most: everything else is in
-the video. After that, chat as usual, in text, unless the user asks
-for demos-only for the whole chat. Never post demos on GitHub.
+The reply that delivers a demo is the video and a short list, all
+from `demo build`'s output; everything else is in the video:
+
+```md
+![demo](/home/u/public/demos/demo-kit-desk-rec/demo.mp4)
+
+- https://node/files/demos/demo-kit-desk-rec/demo.mp4
+- 1:09, built in 10 s
+- speech $0.017
+```
+
+After that, chat as usual, in text, unless the user asks for
+demos-only for the whole chat. Never post demos on GitHub.
 
 ## Where files go
 
@@ -42,12 +51,13 @@ desk rec start -o $W/artifacts/pause.mp4 $D   # act; pause/resume skip dead time
 desk rec stop $D
 ```
 
-A terminal: the user's Ghostty and zsh, as its own instance with a
-plain title bar and no tmux:
+A terminal: Ghostty with a demo zsh (short prompt, high contrast, the
+user's syntax highlighting, no history), its own instance, no tmux:
 
 ```sh
-DISPLAY=$D setsid -f ghostty \
-  --config-file=$HOME/projects/demo-kit/skills/demo/ghostty.conf
+S=$HOME/projects/demo-kit/skills/demo
+DISPLAY=$D ZDOTDIR=$S/zsh setsid -f ghostty \
+  --config-default-files=false --config-file=$S/ghostty.conf
 ```
 
 Code is drawn, not filmed. Preview what a scene will show:
