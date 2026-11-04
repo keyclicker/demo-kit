@@ -24,6 +24,7 @@ var maximizeClasses = []string{
 	"freecad",
 	"godot",
 	"t3code",
+	"xterm", // TUI and CLI demos (pr-demo skill)
 }
 
 // shouldMaximize reports whether a WM_CLASS class is on the list.
