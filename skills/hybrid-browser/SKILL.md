@@ -11,7 +11,7 @@ what it can't and shows the truth. 3x faster than either alone.
 ## Setup
 
 ```sh
-D=$(desk new)                          # records itself
+D=$(desk new)                          # records until desk rm
 P=$(agent-chromium start -display $D)  # prints its port
 agent-browser connect $P
 # ...work...

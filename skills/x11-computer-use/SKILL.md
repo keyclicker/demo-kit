@@ -11,7 +11,8 @@ what each member looks like as a shell command on X11. Use what's helpful.
 ## Display
 
 Work on your own disposable `desk` display. The user watches it
-view-only at `/desktops`; it records itself and dies with your process.
+view-only at `/desktops`; it records itself (`desk rm` saves the video)
+and dies with your process.
 
 ```sh
 desk new                    # → :10 (1280x960, GPU)
@@ -38,18 +39,12 @@ Never delete recordings, yours included: they're the user's history of
 what agents did, never noise. A recording the user won't need: just
 don't send it.
 
-`desk` displays record themselves. On `:0`, record it yourself:
+`desk new` records until `desk rm`, which saves the video. Long dead
+time (installs, builds, waits): `desk rec pause :N`, then `resume`.
+Need custom clips (a PR demo, the `pr-demo` skill): `desk new -no-rec`,
+then `desk rec start [-o FILE] :N` and `desk rec stop :N`.
 
-```sh
-V=~/public/recordings/$(date +%F-%H%M%S).mp4; mkdir -p "${V%/*}"
-nohup ffmpeg -nostdin -loglevel error -vaapi_device /dev/dri/renderD128 \
-  -f x11grab -framerate 30 -i :0 -vf hwupload,scale_vaapi=format=nv12 \
-  -c:v h264_vaapi -qp 28 "$V" >/dev/null 2>&1 &
-echo $! > "$V.pid"; echo "$V"
-```
-
-At the end: `kill -INT` the PID, wait for ffmpeg to exit (the file is
-broken until then), delete the `.pid`.
+On `:0`, after `desk claim`: `desk rec start :0` ... `desk rec stop :0`.
 
 ## Quick map
 | Member | X11 equivalent |
