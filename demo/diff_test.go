@@ -127,3 +127,33 @@ func TestParseHunkList(t *testing.T) {
 		t.Fatal("accepted hunk 0")
 	}
 }
+
+func TestCropLines(t *testing.T) {
+	files, _ := parseDiff(sampleDiff)
+
+	// Hunk 1, new side: 1 package, 2-3 added, 4 blank; "-var x" sits at 2
+	got := cropLines(files[:1], 2, 3)
+	if len(got) != 1 || len(got[0].Hunks) != 1 {
+		t.Fatalf("got %+v", got)
+	}
+	h := got[0].Hunks[0]
+	if h.NewStart != 2 || len(h.Lines) != 3 || h.Adds != 2 || h.Dels != 1 ||
+		h.Lines[0].Kind != '-' {
+		t.Fatalf("cropped hunk: %+v", h)
+	}
+
+	if got := cropLines(files[:1], 100, 200); len(got) != 0 {
+		t.Fatalf("out of range kept %+v", got)
+	}
+}
+
+func TestParseLineRange(t *testing.T) {
+	if got, err := parseLineRange("120-160"); err != nil || got[1] != 160 {
+		t.Fatalf("got %v %v", got, err)
+	}
+	for _, bad := range []string{"5", "9-3", "a-b", "0-2"} {
+		if _, err := parseLineRange(bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}

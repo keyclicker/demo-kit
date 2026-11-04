@@ -200,6 +200,71 @@ func pickHunks(files []*diffFile, picks []int) []*diffFile {
 	return out
 }
 
+// cropLines keeps only lines whose new-side number is in [from, to],
+// plus removed lines sitting among them: a new file is one hunk, and
+// this cuts the part worth showing. Hunks left empty go, then files.
+func cropLines(files []*diffFile, from, to int) []*diffFile {
+	var out []*diffFile
+
+	for _, f := range files {
+		kept := *f
+		kept.Hunks, kept.Adds, kept.Dels = nil, 0, 0
+
+		for _, h := range f.Hunks {
+			c := cropHunk(h, from, to)
+			if c == nil {
+				continue
+			}
+			kept.Hunks = append(kept.Hunks, c)
+			kept.Adds += c.Adds
+			kept.Dels += c.Dels
+		}
+
+		if len(kept.Hunks) > 0 {
+			out = append(out, &kept)
+		}
+	}
+	return out
+}
+
+// cropHunk is cropLines for one hunk; nil if nothing is left.
+func cropHunk(h *hunk, from, to int) *hunk {
+	c := *h
+	c.Lines, c.Adds, c.Dels, c.NewStart = nil, 0, 0, 0
+
+	// A removed line belongs where it sits on the new side: right
+	// after the last new-side line before it
+	at := h.NewStart - 1
+
+	for _, l := range h.Lines {
+		pos := l.New
+		if l.Kind == '-' {
+			pos = at + 1
+		} else {
+			at = l.New
+		}
+		if pos < from || pos > to {
+			continue
+		}
+
+		if c.NewStart == 0 {
+			c.NewStart = pos
+		}
+		c.Lines = append(c.Lines, l)
+		switch l.Kind {
+		case '+':
+			c.Adds++
+		case '-':
+			c.Dels++
+		}
+	}
+
+	if len(c.Lines) == 0 {
+		return nil
+	}
+	return &c
+}
+
 // gitDiff runs `git diff` with args (revisions, `--`, paths) here.
 func gitDiff(ctx context.Context, unified int, args []string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"diff",
@@ -496,6 +561,7 @@ func cmdDiff(args []string) error {
 	out := fs.String("o", "", "PNG to write (default ~/tmp/demo/diff-<time>.png)")
 	unified := fs.Int("U", 3, "context lines around changes")
 	picks := fs.String("hunks", "", "hunk numbers to keep, e.g. 1,3 (default all)")
+	lines := fs.String("lines", "", "new-side line range to keep, e.g. 120-160")
 
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: demo diff [flags] "+
@@ -510,6 +576,11 @@ func cmdDiff(args []string) error {
 		return err
 	}
 
+	span, err := parseLineRange(*lines)
+	if err != nil {
+		return err
+	}
+
 	path := *out
 	if path == "" {
 		dir, err := scratchDir()
@@ -520,7 +591,7 @@ func cmdDiff(args []string) error {
 	}
 
 	files, err := diffImage(context.Background(), DiffSpec{Args: fs.Args(),
-		Hunks: hunks, Context: *unified}, path)
+		Hunks: hunks, Lines: span, Context: *unified}, path)
 	if err != nil {
 		return err
 	}
@@ -538,10 +609,12 @@ func cmdDiff(args []string) error {
 	return nil
 }
 
-// DiffSpec is a diff scene: `git diff Args`, optionally only Hunks.
+// DiffSpec is a diff scene: `git diff Args`, optionally only Hunks,
+// then only new-side Lines [from, to].
 type DiffSpec struct {
 	Args    []string `json:"args"`
 	Hunks   []int    `json:"hunks,omitempty"`
+	Lines   []int    `json:"lines,omitempty"`
 	Context int      `json:"context,omitempty"` // default 3
 }
 
@@ -564,12 +637,30 @@ func diffImage(ctx context.Context, spec DiffSpec, out string) ([]*diffFile,
 	}
 
 	files = pickHunks(files, spec.Hunks)
+	if len(spec.Lines) == 2 {
+		files = cropLines(files, spec.Lines[0], spec.Lines[1])
+	}
 	if len(files) == 0 {
 		return nil, fmt.Errorf("git diff %s: nothing to show",
 			strings.Join(spec.Args, " "))
 	}
 
 	return files, renderDiff(files, out)
+}
+
+// parseLineRange parses "120-160"; empty is no range.
+func parseLineRange(s string) ([]int, error) {
+	if s == "" {
+		return nil, nil
+	}
+
+	a, b, found := strings.Cut(s, "-")
+	from, err1 := strconv.Atoi(a)
+	to, err2 := strconv.Atoi(b)
+	if !found || err1 != nil || err2 != nil || from < 1 || to < from {
+		return nil, fmt.Errorf("-lines %q: want FROM-TO, e.g. 120-160", s)
+	}
+	return []int{from, to}, nil
 }
 
 // parseHunkList parses "1,3,4".

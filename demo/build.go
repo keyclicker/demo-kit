@@ -99,6 +99,9 @@ func (s Scene) check() error {
 		return errors.New("needs say, or secs for a silent scene")
 	case s.To != 0 && s.To <= s.From:
 		return errors.New("to must be after from")
+	case s.Diff != nil && len(s.Diff.Lines) != 0 &&
+		(len(s.Diff.Lines) != 2 || s.Diff.Lines[1] < s.Diff.Lines[0]):
+		return errors.New("diff lines: want [from, to]")
 	}
 	return nil
 }
