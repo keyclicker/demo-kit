@@ -14,8 +14,12 @@ type cue struct {
 	Text       string
 }
 
-// maxCue keeps a caption to two lines at the burned-in font size.
-const maxCue = 80
+// A cue is at most two lines, wrapped here rather than by libass,
+// which breaks lines at hyphens and unevenly
+const (
+	maxLine = 42
+	maxCue  = 2 * maxLine
+)
 
 var sentenceEnd = regexp.MustCompile(`[.!?…]+["')\]]*\s+`)
 
@@ -25,7 +29,9 @@ var sentenceEnd = regexp.MustCompile(`[.!?…]+["')\]]*\s+`)
 func narrationCues(text string, start, dur float64) []cue {
 	var chunks []string
 	for _, s := range splitSentences(text) {
-		chunks = append(chunks, splitWords(s, maxCue)...)
+		for _, c := range splitWords(s, maxCue) {
+			chunks = append(chunks, strings.Join(splitWords(c, maxLine), "\n"))
+		}
 	}
 
 	total := 0

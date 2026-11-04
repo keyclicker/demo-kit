@@ -7,22 +7,29 @@ import (
 	"testing"
 )
 
-func TestSceneLength(t *testing.T) {
-	// Narration + lead + tail, rounded up to whole frames
-	got := sceneLength(3.01, 0)
-	if want := math.Ceil((leadIn+3.01+tailOut)*fps) / fps; got != want {
-		t.Fatalf("sceneLength = %v, want %v", got, want)
+func TestSceneTiming(t *testing.T) {
+	// Lead, steps with gaps, tail; whole frames
+	got := sceneTiming([]float64{2, 3.01}, 0)
+	if got.Starts[0] != leadIn || got.Starts[1] != leadIn+2+stepGap {
+		t.Fatalf("starts %v", got.Starts)
 	}
-	if frames := got * fps; math.Abs(frames-math.Round(frames)) > 1e-9 {
-		t.Fatalf("%v s is not whole frames", got)
+	if got.Cuts[0] != 0 || got.Cuts[1] != frames(leadIn+2+stepGap/2) {
+		t.Fatalf("cuts %v", got.Cuts)
+	}
+	want := math.Ceil((leadIn+2+stepGap+3.01+tailOut)*fps) / fps
+	if got.Length != want {
+		t.Fatalf("length %v, want %v", got.Length, want)
+	}
+	if frames := got.Length * fps; math.Abs(frames-math.Round(frames)) > 1e-9 {
+		t.Fatalf("%v s is not whole frames", got.Length)
 	}
 
-	// Silent scenes take Secs; Secs is a floor for spoken ones
-	if got := sceneLength(0, 2); got != 2 {
-		t.Fatalf("silent: %v", got)
+	// Silent scenes take secs; secs is a floor for spoken ones
+	if got := sceneTiming(nil, 2); got.Length != 2 {
+		t.Fatalf("silent: %v", got.Length)
 	}
-	if got := sceneLength(1, 5); got != 5 {
-		t.Fatalf("floor: %v", got)
+	if got := sceneTiming([]float64{1}, 5); got.Length != 5 {
+		t.Fatalf("floor: %v", got.Length)
 	}
 }
 
@@ -40,7 +47,8 @@ func TestLoadScript(t *testing.T) {
 	path := filepath.Join(dir, "s.json")
 	os.WriteFile(path, []byte(`{"title": "T", "scenes": [
 		{"say": "hi", "clip": "a.mp4", "from": 1, "to": 2},
-		{"secs": 2, "diff": {"args": ["HEAD~1"]}}]}`), 0o644)
+		{"code": {"diff": ["HEAD~1"]}, "steps": [
+			{"say": "a", "focus": [1, 4]}, {"say": "b"}]}]}`), 0o644)
 
 	s, err := loadScript(path)
 	if err != nil {
@@ -55,6 +63,9 @@ func TestLoadScript(t *testing.T) {
 
 	bad := map[string]string{
 		"two sources": `{"scenes": [{"say": "x", "clip": "a", "image": "b"}]}`,
+		"say + steps": `{"scenes": [{"say": "x", "code": {"file": "a"}, "steps": [{"say": "y"}]}]}`,
+		"clip steps":  `{"scenes": [{"clip": "a", "steps": [{"say": "y"}]}]}`,
+		"bad focus":   `{"scenes": [{"code": {"file": "a"}, "steps": [{"say": "y", "focus": [3]}]}]}`,
 		"no length":   `{"scenes": [{"clip": "a"}]}`,
 		"typo":        `{"scenes": [{"say": "x", "clp": "a"}]}`,
 		"empty":       `{"scenes": []}`,

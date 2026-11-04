@@ -11,7 +11,6 @@ import (
 	_ "image/png"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -31,22 +30,34 @@ type Script struct {
 
 // Scene is one narrated shot. Exactly one picture source: Clip (a
 // recording, optionally From/To seconds), Image (a still; tall ones
-// scroll), or Diff (rendered like `demo diff`, scrolled).
+// scroll), or Code (a file or diff, drawn).
+//
+// Narration is Say, or Steps on a code scene: each step's line is
+// spoken while its Focus lines are lit and scrolled into view.
 type Scene struct {
 	Chapter string `json:"chapter,omitempty"` // starts a chapter
 	Say     string `json:"say,omitempty"`
+	Steps   []Step `json:"steps,omitempty"`
 
 	Clip  string    `json:"clip,omitempty"`
 	From  float64   `json:"from,omitempty"`
 	To    float64   `json:"to,omitempty"`
 	Image string    `json:"image,omitempty"`
-	Diff  *DiffSpec `json:"diff,omitempty"`
+	Code  *CodeSpec `json:"code,omitempty"`
 
-	// Secs is the scene's minimum length; needed when Say is empty
+	// Secs is the scene's minimum length; needed when nothing is said
 	Secs float64 `json:"secs,omitempty"`
 }
 
-// loadScript reads a script, resolving files against its directory.
+// Step is one beat of a code scene's narration.
+type Step struct {
+	Say   string `json:"say"`
+	Focus []int  `json:"focus,omitempty"` // lines [from, to] to light up
+}
+
+// loadScript reads a script, resolving clips and images against its
+// directory. Code paths stay relative to the current directory, like
+// git's.
 func loadScript(path string) (*Script, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -83,22 +94,50 @@ func loadScript(path string) (*Script, error) {
 	return &s, nil
 }
 
-// check rejects scenes with no picture, two pictures, or no length.
+// check rejects scenes with no picture or two, no length, or steps
+// where they can't apply.
 func (s Scene) check() error {
 	sources := 0
-	for _, set := range []bool{s.Clip != "", s.Image != "", s.Diff != nil} {
-		if set {
-			sources++
-		}
+	for _, set := range []bool{s.Clip != "", s.Image != "", s.Code != nil} {
+		sources += btoi(set)
 	}
 
 	switch {
 	case sources != 1:
-		return errors.New("needs exactly one of clip, image, diff")
-	case strings.TrimSpace(s.Say) == "" && s.Secs <= 0:
-		return errors.New("needs say, or secs for a silent scene")
+		return errors.New("needs exactly one of clip, image, code")
+	case s.Say != "" && s.Steps != nil:
+		return errors.New("say or steps, not both")
+	case s.Steps != nil && s.Code == nil:
+		return errors.New("steps need a code scene")
+	case len(s.parts()) == 0 && s.Secs <= 0:
+		return errors.New("needs say or steps, or secs for a silent scene")
 	case s.To != 0 && s.To <= s.From:
 		return errors.New("to must be after from")
+	}
+
+	for i, st := range s.Steps {
+		if strings.TrimSpace(st.Say) == "" {
+			return fmt.Errorf("step %d: needs say", i+1)
+		}
+		if err := checkRange(fmt.Sprintf("step %d focus", i+1),
+			st.Focus); err != nil {
+			return err
+		}
+	}
+
+	if s.Code != nil {
+		return s.Code.check()
+	}
+	return nil
+}
+
+// parts is what the scene says, as steps: Say is a single step.
+func (s Scene) parts() []Step {
+	if s.Steps != nil {
+		return s.Steps
+	}
+	if strings.TrimSpace(s.Say) != "" {
+		return []Step{{Say: s.Say}}
 	}
 	return nil
 }
@@ -108,25 +147,58 @@ func (s Scene) check() error {
 const (
 	fps = 30
 
-	leadIn  = 0.2 // silence before a scene's narration
-	tailOut = 0.4 // and after it
+	captionBand = 128 // px under the 1280x960 picture
+
+	leadIn  = 0.2  // silence before a scene's narration
+	stepGap = 0.25 // between steps
+	tailOut = 0.4  // after it
+
+	scrollSecs = 0.35 // a focus change scrolls this long
 
 	// maxSpeed warns past it: a clip that needs more is too long for
 	// its narration (cut From/To, or say more)
 	maxSpeed = 6.0
 )
 
-// sceneLength is how long a scene runs: its narration plus breathing
-// room, at least Secs, rounded up to whole frames so audio and video
-// stay in step across scenes.
-func sceneLength(speech, secs float64) float64 {
-	l := speech
-	if speech > 0 {
-		l = leadIn + speech + tailOut
-	}
-	l = max(l, secs)
+// timing places a scene's spoken steps: Starts[k] is when step k
+// begins, Cuts[k] where its picture takes over (Cuts[0] = 0), Length
+// the whole scene.
+type timing struct {
+	Starts, Cuts []float64
+	Length       float64
+}
 
-	return math.Ceil(l*fps) / fps
+// sceneTiming lays steps of the given speech lengths out: lead, steps
+// with gaps between, tail; at least secs. The length is whole frames
+// so audio and video stay in step across scenes; a picture changes
+// mid-gap, on a frame.
+func sceneTiming(speech []float64, secs float64) timing {
+	t := timing{}
+	at := leadIn
+
+	for k, d := range speech {
+		if k > 0 {
+			at += stepGap
+		}
+		t.Starts = append(t.Starts, at)
+		t.Cuts = append(t.Cuts, frames(at-stepGap/2))
+		at += d
+	}
+	if len(t.Cuts) > 0 {
+		t.Cuts[0] = 0
+	}
+
+	length := secs
+	if len(speech) > 0 {
+		length = max(at+tailOut, secs)
+	}
+	t.Length = math.Ceil(length*fps) / fps
+	return t
+}
+
+// frames rounds seconds to the nearest frame.
+func frames(secs float64) float64 {
+	return math.Round(secs*fps) / fps
 }
 
 // speedFor is the speed-up that fits a clip of length clip into
@@ -138,11 +210,11 @@ func speedFor(clip, length float64) float64 {
 // ---- demo build ----
 
 // cmdBuild renders a script into one narrated, captioned mp4 with
-// chapters, in ~/public/pr-demos by default.
+// chapters, in ~/public/demos by default.
 func cmdBuild(args []string) error {
 	fs := flag.NewFlagSet("build", flag.ExitOnError)
 	out := fs.String("o", "", "video to write "+
-		"(default ~/public/pr-demos/<repo>/<time>-<title>.mp4)")
+		"(default ~/public/demos/<time>-<title>.mp4)")
 	keep := fs.Bool("keep", false, "keep the work dir (scenes, captions)")
 
 	fs.Usage = func() {
@@ -164,7 +236,7 @@ func cmdBuild(args []string) error {
 
 	video := *out
 	if video == "" {
-		if video, err = defaultVideoPath(ctx, script.Title); err != nil {
+		if video, err = defaultVideoPath(script.Title); err != nil {
 			return err
 		}
 	}
@@ -201,8 +273,8 @@ type builder struct {
 	work   string
 	key    string
 
-	speech  []spoken
-	lengths []float64
+	speech  [][]spoken // per scene, per step
+	timings []timing
 	cues    []cue
 }
 
@@ -227,11 +299,13 @@ func (b *builder) build(ctx context.Context, video string) error {
 			limit <- struct{}{}
 			defer func() { <-limit }()
 
-			if err := b.sceneVideo(ctx, i); err != nil {
-				errs[i] = fmt.Errorf("scene %d: %w", i+1, err)
-				return
+			err := b.sceneVideo(ctx, i)
+			if err == nil {
+				err = b.sceneAudio(ctx, i)
 			}
-			errs[i] = b.sceneAudio(ctx, i)
+			if err != nil {
+				errs[i] = fmt.Errorf("scene %d: %w", i+1, err)
+			}
 		})
 	}
 	wg.Wait()
@@ -249,10 +323,13 @@ func (b *builder) build(ctx context.Context, video string) error {
 		return err
 	}
 
-	// Captions are burned on the CPU (libass), then encoded on the GPU
-	style := "FontName=DejaVu Sans,FontSize=13,PrimaryColour=&H00FFFFFF," +
-		"BorderStyle=3,Outline=6,OutlineColour=&H60000000,Shadow=0," +
-		"MarginV=22"
+	// Captions get a band of their own under the picture, so they never
+	// hide code. Burned on the CPU (libass), then encoded on the GPU.
+	// Sizes are in libass units: 288 = the video's height.
+	band := fmt.Sprintf("pad=%d:%d:0:0:color=0x0d1117", frameW,
+		frameH+captionBand)
+	style := "FontName=DejaVu Sans,FontSize=10,PrimaryColour=&H00FFFFFF," +
+		"BorderStyle=1,Outline=0,Shadow=0,MarginV=6"
 
 	err := ffmpeg(ctx, b.work, nil,
 		"-vaapi_device", renderNode,
@@ -261,7 +338,7 @@ func (b *builder) build(ctx context.Context, video string) error {
 		"-f", "ffmetadata", "-i", "chapters.txt",
 		"-map", "0:v", "-map", "1:a",
 		"-map_metadata", "2", "-map_chapters", "2",
-		"-vf", "subtitles=captions.srt:force_style='"+style+"',"+
+		"-vf", band+",subtitles=captions.srt:force_style='"+style+"',"+
 			"format=nv12,hwupload",
 		"-c:v", "h264_vaapi", "-qp", "24",
 		"-c:a", "aac", "-b:a", "128k",
@@ -275,22 +352,22 @@ func (b *builder) build(ctx context.Context, video string) error {
 	return nil
 }
 
-// speak synthesizes every scene's narration in parallel (cached ones
-// are free), then fixes each scene's length and captions.
+// speak synthesizes every step of every scene in parallel (cached ones
+// are free), then times each scene and its captions.
 func (b *builder) speak(ctx context.Context) error {
 	scenes := b.script.Scenes
-	b.speech = make([]spoken, len(scenes))
-	b.lengths = make([]float64, len(scenes))
-	durs := make([]float64, len(scenes))
-	errs := make([]error, len(scenes))
-
+	b.speech = make([][]spoken, len(scenes))
+	durs := make([][]float64, len(scenes))
+	var errs []error
+	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for i, s := range scenes {
-		if strings.TrimSpace(s.Say) == "" {
-			continue
-		}
 
-		if b.key == "" {
+	for i, s := range scenes {
+		parts := s.parts()
+		b.speech[i] = make([]spoken, len(parts))
+		durs[i] = make([]float64, len(parts))
+
+		if len(parts) > 0 && b.key == "" {
 			key, err := apiKey(ctx)
 			if err != nil {
 				return err
@@ -298,13 +375,21 @@ func (b *builder) speak(ctx context.Context) error {
 			b.key = key
 		}
 
-		wg.Go(func() {
-			sp, err := speak(ctx, b.key, b.script.Voice, s.Say)
-			if err == nil {
-				durs[i], err = probeDuration(ctx, sp.Wav)
-			}
-			b.speech[i], errs[i] = sp, err
-		})
+		for k, p := range parts {
+			wg.Go(func() {
+				sp, err := speak(ctx, b.key, b.script.Voice, p.Say)
+				if err == nil {
+					durs[i][k], err = probeDuration(ctx, sp.Wav)
+				}
+				b.speech[i][k] = sp
+
+				if err != nil {
+					mu.Lock()
+					errs = append(errs, fmt.Errorf("scene %d: %w", i+1, err))
+					mu.Unlock()
+				}
+			})
+		}
 	}
 	wg.Wait()
 
@@ -314,12 +399,14 @@ func (b *builder) speak(ctx context.Context) error {
 
 	at := 0.0
 	for i, s := range scenes {
-		b.lengths[i] = sceneLength(durs[i], s.Secs)
-		if durs[i] > 0 {
+		t := sceneTiming(durs[i], s.Secs)
+		b.timings = append(b.timings, t)
+
+		for k, p := range s.parts() {
 			b.cues = append(b.cues,
-				narrationCues(s.Say, at+leadIn, durs[i])...)
+				narrationCues(p.Say, at+t.Starts[k], durs[i][k])...)
 		}
-		at += b.lengths[i]
+		at += t.Length
 	}
 	return nil
 }
@@ -343,22 +430,16 @@ var (
 // sceneVideo renders scene i's picture at exactly its length.
 func (b *builder) sceneVideo(ctx context.Context, i int) error {
 	s := b.script.Scenes[i]
-	length := b.lengths[i]
+	length := b.timings[i].Length
 	out := b.scenePath(i, "mp4")
 
 	switch {
 	case s.Clip != "":
 		return b.clipScene(ctx, i, s, length, out)
-
 	case s.Image != "":
 		return stillScene(ctx, s.Image, length, out)
-
 	default:
-		png := b.scenePath(i, "png")
-		if _, err := diffImage(ctx, *s.Diff, png); err != nil {
-			return err
-		}
-		return stillScene(ctx, png, length, out)
+		return b.codeScene(ctx, i, s, out)
 	}
 }
 
@@ -429,6 +510,99 @@ func stillScene(ctx context.Context, img string, length float64,
 		"-i", img, "-vf", vf}, append(sceneCodec, out)...)...)
 }
 
+// codeScene draws scene i's code. Plain narration: one image, scrolled
+// if tall. Steps: one image per step, its focus lit, each scrolling
+// from the last step's view to its own.
+func (b *builder) codeScene(ctx context.Context, i int, s Scene,
+	out string) error {
+
+	l, err := s.Code.load(ctx)
+	if err != nil {
+		return err
+	}
+
+	if s.Steps == nil {
+		r, err := drawListing(l, nil)
+		if err != nil {
+			return err
+		}
+		png := b.scenePath(i, "png")
+		if err := savePNG(r.Img, png); err != nil {
+			return err
+		}
+		return stillScene(ctx, png, b.timings[i].Length, out)
+	}
+
+	// ---- One segment per step ----
+
+	t := b.timings[i]
+	var segments []string
+	prevY := -1
+
+	for k, st := range s.Steps {
+		r, err := drawListing(l, st.Focus)
+		if err != nil {
+			return fmt.Errorf("step %d: %w", k+1, err)
+		}
+
+		// No focus: stay where the last step was (the top, first)
+		y := prevY
+		if st.Focus != nil {
+			y = r.focusY(st.Focus[0], st.Focus[1])
+		}
+		y = max(y, 0)
+		if prevY < 0 {
+			prevY = y
+		}
+
+		png := b.scenePath(i, fmt.Sprintf("step-%02d.png", k+1))
+		if err := savePNG(r.Img, png); err != nil {
+			return err
+		}
+
+		end := t.Length
+		if k+1 < len(t.Cuts) {
+			end = t.Cuts[k+1]
+		}
+
+		seg := b.scenePath(i, fmt.Sprintf("step-%02d.mp4", k+1))
+		if err := scrollSegment(ctx, png, prevY, y, end-t.Cuts[k],
+			seg); err != nil {
+			return err
+		}
+
+		segments = append(segments, seg)
+		prevY = y
+	}
+
+	return joinVideos(ctx, segments, out)
+}
+
+// scrollSegment shows a frame-high window of img for length seconds,
+// easing its top from y0 to y1 (smoothstep over scrollSecs).
+func scrollSegment(ctx context.Context, img string, y0, y1 int,
+	length float64, out string) error {
+
+	s := fmt.Sprintf("min(t/%s,1)", ftoa(scrollSecs))
+	y := fmt.Sprintf("%d+(%d)*%s*%s*(3-2*%s)", y0, y1-y0, s, s, s)
+	vf := fmt.Sprintf("crop=%d:%d:0:'%s',%s", frameW, frameH, y, fitFilter)
+
+	return ffmpeg(ctx, "", nil, append([]string{
+		"-loop", "1", "-framerate", fmt.Sprint(fps), "-t", ftoa(length),
+		"-i", img, "-vf", vf}, append(sceneCodec, out)...)...)
+}
+
+// joinVideos concatenates same-format videos losslessly.
+func joinVideos(ctx context.Context, parts []string, out string) error {
+	list := out + ".txt"
+	if err := os.WriteFile(list, []byte(concatList(parts)), 0o644); err != nil {
+		return err
+	}
+
+	return ffmpeg(ctx, "", nil, "-f", "concat", "-safe", "0", "-i", list,
+		"-c", "copy", out)
+}
+
 // imageSize reads an image's dimensions from its header.
 func imageSize(path string) (w, h int, err error) {
 	f, err := os.Open(path)
@@ -444,34 +618,48 @@ func imageSize(path string) (w, h int, err error) {
 	return cfg.Width, cfg.Height, nil
 }
 
-// sceneAudio lays scene i's narration over its length, or silence.
+// sceneAudio lays scene i's spoken steps at their starts over silence
+// of the scene's length.
 func (b *builder) sceneAudio(ctx context.Context, i int) error {
-	length := ftoa(b.lengths[i])
+	t := b.timings[i]
+	length := ftoa(t.Length)
 	out := b.scenePath(i, "wav")
-	format := []string{"-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le"}
 
-	if b.speech[i].Wav == "" {
-		return ffmpeg(ctx, "", nil, append([]string{"-f", "lavfi",
-			"-i", "anullsrc=r=48000:cl=mono", "-t", length},
-			append(format, out)...)...)
+	// Silence is the first input: the mix always spans the scene
+	args := []string{"-f", "lavfi", "-t", length,
+		"-i", "anullsrc=r=48000:cl=mono"}
+	var graph strings.Builder
+
+	for k, sp := range b.speech[i] {
+		args = append(args, "-i", sp.Wav)
+		fmt.Fprintf(&graph, "[%d:a]adelay=%d:all=1[s%d];", k+1,
+			int(math.Round(t.Starts[k]*1000)), k)
 	}
 
-	af := fmt.Sprintf("adelay=%d:all=1,apad=whole_dur=%s,atrim=duration=%s",
-		int(leadIn*1000), length, length)
-	return ffmpeg(ctx, "", nil, append([]string{"-i", b.speech[i].Wav,
-		"-af", af}, append(format, out)...)...)
+	graph.WriteString("[0:a]")
+	for k := range b.speech[i] {
+		fmt.Fprintf(&graph, "[s%d]", k)
+	}
+	fmt.Fprintf(&graph, "amix=inputs=%d:normalize=0:duration=first[out]",
+		len(b.speech[i])+1)
+
+	return ffmpeg(ctx, "", nil, append(args,
+		"-filter_complex", graph.String(), "-map", "[out]",
+		"-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", out)...)
 }
 
 // writeSidecars writes the concat lists, captions and chapters the
 // final encode reads.
 func (b *builder) writeSidecars() error {
 	var videos, audios []string
+	var lengths []float64
 	for i := range b.script.Scenes {
 		videos = append(videos, b.scenePath(i, "mp4"))
 		audios = append(audios, b.scenePath(i, "wav"))
+		lengths = append(lengths, b.timings[i].Length)
 	}
 
-	chs := chapters(b.script.Scenes, b.lengths, b.script.Title)
+	chs := chapters(b.script.Scenes, lengths, b.script.Title)
 	files := map[string]string{
 		"video.txt":    concatList(videos),
 		"audio.txt":    concatList(audios),
@@ -504,8 +692,10 @@ func (b *builder) report(ctx context.Context, video string) {
 	}
 
 	var ids []string
-	for _, sp := range b.speech {
-		ids = append(ids, sp.GenID)
+	for _, scene := range b.speech {
+		for _, sp := range scene {
+			ids = append(ids, sp.GenID)
+		}
 	}
 	if b.key != "" {
 		if usd, err := totalCost(ctx, b.key, ids); err == nil {
@@ -542,9 +732,8 @@ func scratchDir() (string, error) {
 
 var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
 
-// defaultVideoPath is ~/public/pr-demos/<repo>/<time>-<title>.mp4,
-// <repo> from this checkout's origin.
-func defaultVideoPath(ctx context.Context, title string) (string, error) {
+// defaultVideoPath is ~/public/demos/<time>-<title>.mp4.
+func defaultVideoPath(title string) (string, error) {
 	public, err := publicDir()
 	if err != nil {
 		return "", err
@@ -556,17 +745,5 @@ func defaultVideoPath(ctx context.Context, title string) (string, error) {
 		name += "-" + slug
 	}
 
-	return filepath.Join(public, "pr-demos", repoName(ctx), name+".mp4"), nil
-}
-
-// repoName is origin's repository name, or "misc" outside a repo.
-func repoName(ctx context.Context) string {
-	out, err := exec.CommandContext(ctx, "git", "remote", "get-url",
-		"origin").Output()
-	if err != nil {
-		return "misc"
-	}
-
-	url := strings.TrimSuffix(strings.TrimSpace(string(out)), ".git")
-	return filepath.Base(strings.ReplaceAll(url, ":", "/"))
+	return filepath.Join(public, "demos", name+".mp4"), nil
 }

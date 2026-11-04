@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/alecthomas/chroma/v2"
 )
 
 const sampleDiff = `diff --git a/a.go b/a.go
@@ -103,10 +105,14 @@ func TestWrapTokens(t *testing.T) {
 	}
 }
 
-func TestRenderDiff(t *testing.T) {
+func TestDrawListing(t *testing.T) {
 	files, _ := parseDiff(sampleDiff)
+	r, err := drawListing(&listing{Files: files, Diff: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	out := filepath.Join(t.TempDir(), "d.png")
-	if err := renderDiff(files, out); err != nil {
+	if err := savePNG(r.Img, out); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,5 +131,89 @@ func TestParseHunkList(t *testing.T) {
 	}
 	if _, err := parseHunkList("0"); err == nil {
 		t.Fatal("accepted hunk 0")
+	}
+}
+
+func TestCropLines(t *testing.T) {
+	files, _ := parseDiff(sampleDiff)
+
+	// Hunk 1, new side: 1 package, 2-3 added, 4 blank; "-var x" sits at 2
+	got := cropLines(files[:1], 2, 3)
+	if len(got) != 1 || len(got[0].Hunks) != 1 {
+		t.Fatalf("got %+v", got)
+	}
+	h := got[0].Hunks[0]
+	if h.NewStart != 2 || len(h.Lines) != 3 || h.Adds != 2 || h.Dels != 1 ||
+		h.Lines[0].Kind != '-' {
+		t.Fatalf("cropped hunk: %+v", h)
+	}
+
+	if got := cropLines(files[:1], 100, 200); len(got) != 0 {
+		t.Fatalf("out of range kept %+v", got)
+	}
+}
+
+func TestParseLineRange(t *testing.T) {
+	if got, err := parseLineRange("lines", "120-160"); err != nil || got[1] != 160 {
+		t.Fatalf("got %v %v", got, err)
+	}
+	for _, bad := range []string{"5", "9-3", "a-b", "0-2"} {
+		if _, err := parseLineRange("lines", bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}
+
+func TestFocus(t *testing.T) {
+	files, _ := parseDiff(sampleDiff)
+	l := &listing{Files: files[:1], Diff: true}
+
+	r, err := drawListing(l, []int{2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if y := r.focusY(2, 3); y != 0 {
+		t.Fatalf("short listing scrolled to %d", y)
+	}
+
+	// Positions are per file: focus on a multi-file listing is refused
+	if _, err := drawListing(&listing{Files: files, Diff: true},
+		[]int{1, 2}); err == nil {
+		t.Fatal("focus on 3 files accepted")
+	}
+}
+
+func TestReadSourceAndHighlight(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.go")
+	os.WriteFile(path, []byte("package a\n\nvar s = `one\ntwo`\n"), 0o644)
+
+	l, err := readSource(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := l.Files[0].Hunks[0]
+	if len(h.Lines) != 4 || h.Lines[3].Pos != 4 || h.Lines[3].Text != "two`" {
+		t.Fatalf("lines: %+v", h.Lines)
+	}
+
+	// The raw string's second line keeps the string's color
+	runs := highlightHunk(chroma.Coalesce(lexerFor(path)), h)
+	str := runs[2][len(runs[2])-1].col
+	if len(runs[3]) == 0 || runs[3][0].col != str {
+		t.Fatalf("line 4 runs %+v, want string color %v", runs[3], str)
+	}
+}
+
+func TestCodeSpecCheck(t *testing.T) {
+	bad := []CodeSpec{
+		{},
+		{File: "a", Diff: []string{}},
+		{File: "a", Hunks: []int{1}},
+		{File: "a", Lines: []int{5, 2}},
+	}
+	for _, c := range bad {
+		if c.check() == nil {
+			t.Errorf("accepted %+v", c)
+		}
 	}
 }
