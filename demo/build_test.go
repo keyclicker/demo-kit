@@ -66,6 +66,8 @@ func TestLoadScript(t *testing.T) {
 		"say + steps": `{"scenes": [{"say": "x", "code": {"file": "a"}, "steps": [{"say": "y"}]}]}`,
 		"clip steps":  `{"scenes": [{"clip": "a", "steps": [{"say": "y"}]}]}`,
 		"bad focus":   `{"scenes": [{"code": {"file": "a"}, "steps": [{"say": "y", "focus": [3]}]}]}`,
+		"empty mark":  `{"scenes": [{"code": {"file": "a"}, "steps": [{"say": "y", "marks": [""]}]}]}`,
+		"bad scroll":  `{"scenes": [{"say": "y", "code": {"file": "a", "scroll": "fast"}}]}`,
 		"no length":   `{"scenes": [{"clip": "a"}]}`,
 		"typo":        `{"scenes": [{"say": "x", "clp": "a"}]}`,
 		"empty":       `{"scenes": []}`,
@@ -82,5 +84,16 @@ func TestConcatListQuotes(t *testing.T) {
 	got := concatList([]string{"/a/it's.mp4"})
 	if want := "file '/a/it'\\''s.mp4'\n"; got != want {
 		t.Fatalf("concatList = %q", got)
+	}
+}
+
+func TestPagedY(t *testing.T) {
+	// Fits: one page, stays at 0. Taller: pages pageStep apart
+	if got := pagedY(frameH, 6); got != "min(floor(t/6.000)*864,ih-oh)" {
+		t.Fatalf("one page: %s", got)
+	}
+	if got := pagedY(frameH+pageStep+1, 6); got !=
+		"min(floor(t/2.000)*864,ih-oh)" {
+		t.Fatalf("three pages: %s", got)
 	}
 }

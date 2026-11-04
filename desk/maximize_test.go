@@ -9,6 +9,7 @@ func TestShouldMaximize(t *testing.T) {
 		"libreoffice-writer":     true,
 		"Gimp":                   true,
 		"XTerm":                  true,
+		"com.mitchellh.ghostty":  true,
 		"XClock":                 false,
 		"missioncenter":          false,
 		"libreofficefake":        false,

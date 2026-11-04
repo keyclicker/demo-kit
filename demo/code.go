@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -27,8 +28,9 @@ import (
 )
 
 // Code is drawn, not recorded: a source file or a git diff becomes a
-// 1280-wide PNG, which a scene scrolls through. Focus dims every line
-// but a range, so narration can point at what it talks about.
+// 1280-wide PNG, which a scene pages through. A highlight fades every
+// line but a range, and marks text inside it, so narration can point
+// at what it talks about.
 
 // ---- Listing ----
 
@@ -79,6 +81,9 @@ type CodeSpec struct {
 	Hunks   []int    `json:"hunks,omitempty"`
 	Lines   []int    `json:"lines,omitempty"`
 	Context int      `json:"context,omitempty"` // diff context, default 3
+
+	// Scroll is how the view moves: "" cuts (default), "smooth" eases
+	Scroll string `json:"scroll,omitempty"`
 }
 
 // check rejects specs with no source, two, or a bad range.
@@ -88,6 +93,9 @@ func (c CodeSpec) check() error {
 		return fmt.Errorf("code: needs exactly one of file, diff")
 	case c.File != "" && len(c.Hunks) > 0:
 		return fmt.Errorf("code: hunks need a diff")
+	case c.Scroll != "" && c.Scroll != "smooth":
+		return fmt.Errorf(`code: scroll %q: want "smooth" or nothing`,
+			c.Scroll)
 	}
 	return checkRange("code lines", c.Lines)
 }
@@ -139,8 +147,20 @@ func readSource(path string) (*listing, error) {
 			Pos: n, Text: line})
 	}
 
-	file := &codeFile{Path: path, Hunks: []*hunk{h}}
+	file := &codeFile{Path: homePath(path), Hunks: []*hunk{h}}
 	return &listing{Files: []*codeFile{file}}, nil
+}
+
+// homePath shortens a path under $HOME to ~/..., for headers.
+func homePath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if rel, ok := strings.CutPrefix(path, home+"/"); ok {
+		return "~/" + rel
+	}
+	return path
 }
 
 // readDiff runs `git diff` with spec's args and context, and keeps the
@@ -401,8 +421,11 @@ var (
 	colHunkText = rgb(0x79c0ff)
 	colFocus    = rgb(0xf0b72f)
 
+	// A mark: a translucent box behind the text, underlined
+	colMark = color.NRGBA{0xf0, 0xb7, 0x2f, 0x40}
+
 	// Out-of-focus lines fade toward the background
-	colFade = color.RGBA{0x0d, 0x11, 0x17, 0xb0}
+	colFade = color.NRGBA{0x0d, 0x11, 0x17, 0xb0}
 )
 
 func rgb(hex uint32) color.RGBA {
@@ -439,11 +462,19 @@ func (r *render) focusY(from, to int) int {
 	return min(max(y, 0), r.Img.Bounds().Dy()-frameH)
 }
 
-// drawListing draws l, at least one frame tall. With focus [from, to],
-// other lines fade and focused ones get a bar; positions are per file,
-// so focus needs a listing of one file.
-func drawListing(l *listing, focus []int) (*render, error) {
-	if focus != nil && len(l.Files) != 1 {
+// highlight is what a step points at: Focus lines [from, to] get a
+// bar while the rest fade; Marks are text boxed wherever it appears
+// (inside Focus, if set).
+type highlight struct {
+	Focus []int
+	Marks []string
+}
+
+// drawListing draws l, at least one frame tall, with hl on it. Focus
+// positions are per file, so it needs a listing of one file; a mark
+// that matches nothing is an error, as it's surely a typo.
+func drawListing(l *listing, hl highlight) (*render, error) {
+	if hl.Focus != nil && len(l.Files) != 1 {
 		return nil, fmt.Errorf("focus needs one file, not %d: narrow "+
 			"the diff to a path, or pick hunks", len(l.Files))
 	}
@@ -457,7 +488,8 @@ func drawListing(l *listing, focus []int) (*render, error) {
 		return nil, err
 	}
 
-	p := &painter{listing: l, face: regular, bold: bold, focus: focus}
+	p := &painter{listing: l, face: regular, bold: bold, hl: hl,
+		marked: map[string]bool{}}
 	p.adv = font.MeasureString(regular, "M").Round()
 
 	// Gutter: 5-digit line number, space, +/- marker, space
@@ -472,6 +504,12 @@ func drawListing(l *listing, focus []int) (*render, error) {
 		image.Point{}, draw.Src)
 	p.rows = map[int][2]int{}
 	p.layout(p.img)
+
+	for _, m := range hl.Marks {
+		if !p.marked[m] {
+			return nil, fmt.Errorf("mark %q: not in the shown lines", m)
+		}
+	}
 
 	return &render{Img: p.img, rows: p.rows}, nil
 }
@@ -505,7 +543,8 @@ func loadFace(ttf []byte) (font.Face, error) {
 type painter struct {
 	listing    *listing
 	face, bold font.Face
-	focus      []int
+	hl         highlight
+	marked     map[string]bool // marks found, for drawListing's check
 
 	adv   int // one column, px
 	codeX int // where code starts
@@ -594,10 +633,13 @@ func (p *painter) hunkHeader(img *image.RGBA, y int, h *hunk) {
 		clip(label, (frameW-2*margin)/p.adv), colHunkText)
 }
 
-// codeLine draws one line: tinted background, gutter, code rows, and
-// focus (a bar on it, or a fade over it).
+// codeLine draws one line: tinted background, gutter, marks, code
+// rows, and focus (a bar on it, or a fade over it).
 func (p *painter) codeLine(img *image.RGBA, y int, l codeLine,
 	rows [][]run) {
+
+	focus := p.hl.Focus
+	inFocus := focus == nil || (l.Pos >= focus[0] && l.Pos <= focus[1])
 
 	h := rowH * len(rows)
 	num, mark, markCol := l.New, " ", colDim
@@ -614,6 +656,10 @@ func (p *painter) codeLine(img *image.RGBA, y int, l codeLine,
 	p.text(img, p.face, margin, y, rowH, fmt.Sprintf("%5d", num), colDim)
 	p.text(img, p.face, margin+6*p.adv, y, rowH, mark, markCol)
 
+	if inFocus {
+		p.marks(img, y, l.Text)
+	}
+
 	for i, row := range rows {
 		x := p.codeX
 		for _, t := range row {
@@ -623,15 +669,53 @@ func (p *painter) codeLine(img *image.RGBA, y int, l codeLine,
 
 	// ---- Focus ----
 
-	if len(p.focus) != 2 {
-		return
-	}
-	if l.Pos >= p.focus[0] && l.Pos <= p.focus[1] {
+	switch {
+	case focus == nil:
+	case inFocus:
 		fill(img, 0, y, focusBar, h, colFocus)
-		return
+	default:
+		draw.Draw(img, image.Rect(0, y, frameW, y+h),
+			image.NewUniform(colFade), image.Point{}, draw.Over)
 	}
-	draw.Draw(img, image.Rect(0, y, frameW, y+h), image.NewUniform(colFade),
-		image.Point{}, draw.Over)
+}
+
+// marks boxes every occurrence of the highlight's marks in a line's
+// text, cell by cell across wrapped rows. Drawn before the text, so
+// the text stays on top.
+func (p *painter) marks(img *image.RGBA, y int, text string) {
+	text = strings.ReplaceAll(text, "\t", strings.Repeat(" ", tabWidth))
+
+	for _, m := range p.hl.Marks {
+		for at := 0; ; {
+			i := strings.Index(text[at:], m)
+			if i < 0 {
+				break
+			}
+			p.marked[m] = true
+
+			start := utf8.RuneCountInString(text[:at+i])
+			p.markCells(img, y, start, start+utf8.RuneCountInString(m))
+			at += i + len(m)
+		}
+	}
+}
+
+// markCells boxes columns [from, to) of a line starting at y.
+func (p *painter) markCells(img *image.RGBA, y, from, to int) {
+	for col := from; col < to; {
+		row, c := col/p.cols, col%p.cols
+		n := min(to-col, p.cols-c)
+
+		x0 := p.codeX + c*p.adv - 2
+		x1 := p.codeX + (c+n)*p.adv + 2
+		top := y + row*rowH + 2
+
+		draw.Draw(img, image.Rect(x0, top, x1, top+rowH-4),
+			image.NewUniform(colMark), image.Point{}, draw.Over)
+		fill(img, x0, top+rowH-6, x1-x0, 2, colFocus)
+
+		col += n
+	}
 }
 
 // text draws s vertically centered in a row of height h at y, and
@@ -781,12 +865,15 @@ func wrapTokens(runs []run, cols int) [][]run {
 // lists what it drew: the preview of a code scene.
 func cmdCode(args []string) error {
 	fs := flag.NewFlagSet("code", flag.ExitOnError)
-	diff := fs.Bool("diff", false, "args are `git diff` args, not a file")
+	diff := fs.Bool("diff", false, "args are git diff args, not a file")
 	out := fs.String("o", "", "PNG to write (default ~/tmp/demo/code-<time>.png)")
 	unified := fs.Int("U", 3, "diff context lines")
 	picks := fs.String("hunks", "", "diff hunks to keep, e.g. 1,3 (default all)")
 	lines := fs.String("lines", "", "line range to keep, e.g. 120-160")
 	focus := fs.String("focus", "", "line range to highlight, e.g. 130-138")
+	var marks []string
+	fs.Func("mark", "`text` to box inside the focus (repeatable)",
+		func(s string) error { marks = append(marks, s); return nil })
 
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: demo code [flags] FILE\n"+
@@ -832,7 +919,7 @@ func cmdCode(args []string) error {
 	// What's in it first: drawing a long diff takes a few seconds
 	printListing(l)
 
-	r, err := drawListing(l, focusRange)
+	r, err := drawListing(l, highlight{focusRange, marks})
 	if err != nil {
 		return err
 	}
