@@ -187,13 +187,14 @@ func treeRuns(h *hunk) [][]run {
 			col = colHunkText
 		}
 
-		for _, r := range []run{{glyphs, colDim}, {name, col}} {
+		parts := []run{{text: glyphs, col: colDim}, {text: name, col: col}}
+		for _, r := range parts {
 			if r.text != "" {
 				out[i] = append(out[i], r)
 			}
 		}
 		if note != "" {
-			out[i] = append(out[i], run{treeNote + note, colDim})
+			out[i] = append(out[i], run{text: treeNote + note, col: colDim})
 		}
 	}
 	return out

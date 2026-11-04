@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -36,19 +37,20 @@ var defaultVoice = Voice{
 	Tempo: 1.2,
 }
 
-// withDefaults fills the fields v leaves empty from defaultVoice.
-func (v Voice) withDefaults() Voice {
+// over fills the fields v leaves empty from base: a script's voice
+// over defaultVoice, a scene's over the script's.
+func (v Voice) over(base Voice) Voice {
 	if v.Model == "" {
-		v.Model = defaultVoice.Model
+		v.Model = base.Model
 	}
 	if v.Name == "" {
-		v.Name = defaultVoice.Name
+		v.Name = base.Name
 	}
 	if v.Instructions == "" {
-		v.Instructions = defaultVoice.Instructions
+		v.Instructions = base.Instructions
 	}
 	if v.Tempo == 0 {
-		v.Tempo = defaultVoice.Tempo
+		v.Tempo = base.Tempo
 	}
 	return v
 }
@@ -161,7 +163,7 @@ func transcode(ctx context.Context, sp speech, tempo float64,
 	}
 	args = append(args, "-ar", "48000", "-ac", "1", wav)
 
-	return ffmpeg(ctx, "", sp.Audio, args...)
+	return ffmpeg(ctx, "", bytes.NewReader(sp.Audio), args...)
 }
 
 // apiKey reads the OpenRouter key from the keyring, at call time.

@@ -12,9 +12,11 @@ import (
 
 const usageText = `demo: narrated demo and explainer videos, and speech
 
-  demo build [-o FILE] [--keep] script.json
+  demo build [-o FILE] [--keep] [--draft] [--scene 2,5] script.json
                          render scenes into one mp4: narrated, fast-cut,
                          captioned, with chapters; prints path, URL, cost
+  demo frames [--every SECS] VIDEO
+                         a contact sheet: frames every few seconds, tiled
   demo code [--lines A-B] [--focus A-B] FILE
   demo code --tree [--depth N] [--lines A-B] [--focus A-B] DIR
   demo code --diff [--split] [--hunks 1,3] [--lines A-B] [--focus A-B] -- [git args]
@@ -43,6 +45,8 @@ func main() {
 		err = cmdBuild(args)
 	case "code":
 		err = cmdCode(args)
+	case "frames":
+		err = cmdFrames(args)
 	case "say":
 		err = cmdSay(args)
 	case "help", "-h", "-help", "--help":

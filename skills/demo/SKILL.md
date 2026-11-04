@@ -36,6 +36,7 @@ demos-only for the whole chat. Never post demos on GitHub.
 ~/public/demos/<project>-<topic>/    kebab-case: demo-kit-desk-rec
   demo.json     the script
   demo.mp4      the result: demo build writes it here
+  demo.transcript.srt   its narration, written beside it
   artifacts/    what it's made of: clips, images, audio, slides
 ```
 
@@ -55,8 +56,11 @@ desk rec start -o $W/artifacts/pause.mp4 $D   # act; pause/resume skip dead time
 desk rec stop $D
 ```
 
-A terminal: Ghostty with a demo zsh (short prompt, high contrast, the
-user's syntax highlighting, no history), its own instance, no tmux:
+Commands and their output need no recording: a `term` scene runs
+them once and draws the typing. For interactive programs (TUIs,
+prompts), record Ghostty with a demo zsh (short prompt, high
+contrast, the user's syntax highlighting, no history), its own
+instance, no tmux:
 
 ```sh
 S=$HOME/projects/demo-kit/skills/demo
@@ -75,27 +79,42 @@ demo code --tree --depth 2 desk      # a file tree, numbered for focus
 
 Speech: `demo say "a line"` plays it; voices and tempo in `demo say -h`.
 
-Edit it all: `demo build $W/demo.json`, run from the repo (code paths
-and git resolve against the current directory). Speech is cached:
-rebuild freely.
+Edit it all: `demo build $W/demo.json`, run from the repo (code paths,
+git and term commands resolve against the current directory). Speech
+is cached: rebuild freely. While editing, `--draft` (half size, no
+captions) and `--scene 3` preview into `~/tmp/demo`.
 
 ## Script
 
 ```json
 {"title": "desk rec", "scenes": [
-  {"chapter": "Why", "image": "artifacts/before.png", "say": "..."},
+  {"chapter": "Why", "slide": {"title": "desk rec", "text": "..."},
+   "say": "..."},
+  {"image": "artifacts/before.png", "steps": [
+    {"say": "..."}, {"say": "...", "box": [880, 140, 300, 60]},
+    {"say": "...", "arrow": [1030, 400]}]},
   {"clip": "artifacts/pause.mp4", "from": 3, "to": 20, "say": "..."},
+  {"term": {"run": ["desk new --no-rec", "desk ls"]}, "steps": [
+    {"say": "..."}, {"say": "..."}]},
   {"code": {"file": "desk/rec.go", "lines": [440, 480]}, "steps": [
     {"say": "...", "focus": [452, 462], "marks": ["r.resume()"]},
     {"say": "...", "focus": [464, 466]}]},
   {"code": {"diff": ["origin/master...HEAD", "--", "desk/"],
-            "hunks": [2]}, "say": "..."}
+            "hunks": [2]}, "say": "..."},
+  {"compare": [{"image": "artifacts/a.png", "label": "before"},
+               {"image": "artifacts/b.png", "label": "after"}], "say": "..."},
+  {"slide": {"end": "Thanks", "lines": ["PR #12", "next: ..."]}, "say": "..."}
 ]}
 ```
 
 Every field, one line each: `demo build -h`. Narration sets each
-scene's length; recordings lose idle frames and speed up to fit.
-Mistakes fail with a reason.
+scene's length; steps point at the picture as they're said (a code
+focus, an image's box or arrow, a terminal's next command).
+Recordings lose idle frames and speed up to fit. Mistakes fail with a
+reason.
 
-Look at a frame per scene before sending:
-`ffmpeg -ss T -i $W/demo.mp4 -frames:v 1 /tmp/f.png`.
+Lists, notes and anything longer than a slide: write markdown into
+`artifacts/` and show it as `code`, a step per point with its focus.
+
+Before sending, look at every scene: `demo frames $W/demo.mp4` tiles
+a frame every few seconds into one PNG.
