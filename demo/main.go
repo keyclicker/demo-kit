@@ -1,6 +1,7 @@
-// Command demo makes short narrated videos, PR demos above all: speech
-// from OpenRouter TTS, diffs drawn as images, recordings fast-cut to
-// fit the narration, captions and chapters, linked in the PR.
+// Command demo makes short narrated videos: demos and explainers of
+// software (a feature, a change, a codebase, a PR). Speech from
+// OpenRouter TTS, code drawn with focus that follows the narration,
+// recordings fast-cut to fit it, captions and chapters.
 package main
 
 import (
@@ -9,20 +10,19 @@ import (
 	"os"
 )
 
-const usageText = `demo: narrated videos for PRs, and speech
+const usageText = `demo: narrated demo and explainer videos, and speech
 
   demo build [-o FILE] [-keep] script.json
                          render scenes into one mp4: narrated, fast-cut,
                          captioned, with chapters; prints path, URL, cost
-  demo diff [-hunks 1,3] [-o FILE] [git diff args]
-                         draw a diff as a PNG, list its numbered hunks
-  demo publish [-pr N] FILE
-                         link the video (and chapters) in the PR body
+  demo code [-lines A-B] [-focus A-B] FILE
+  demo code -diff [-hunks 1,3] [-lines A-B] [-focus A-B] -- [git diff args]
+                         draw code as a code scene would, list its parts
   demo say [-o FILE] [-no-play] [-cost] [text...]
                          speak on :0's speaker (no text: stdin)
 
 Recordings come from desk (desk new records; desk rec for more).
-Script format and workflow: the pr-demo skill. Each command: -h.
+Script format and workflow: the demo skill. Each command: -h.
 `
 
 func main() {
@@ -40,10 +40,8 @@ func main() {
 	switch cmd {
 	case "build":
 		err = cmdBuild(args)
-	case "diff":
-		err = cmdDiff(args)
-	case "publish":
-		err = cmdPublish(args)
+	case "code":
+		err = cmdCode(args)
 	case "say":
 		err = cmdSay(args)
 	case "help", "-h", "-help", "--help":

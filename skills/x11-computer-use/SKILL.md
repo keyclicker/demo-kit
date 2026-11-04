@@ -41,7 +41,7 @@ don't send it.
 
 `desk new` records until `desk rm`, which saves the video. Long dead
 time (installs, builds, waits): `desk rec pause :N`, then `resume`.
-Need custom clips (a PR demo, the `pr-demo` skill): `desk new -no-rec`,
+Need custom clips (a demo video, the `demo` skill): `desk new -no-rec`,
 then `desk rec start [-o FILE] :N` and `desk rec stop :N`.
 
 On `:0`, after `desk claim`: `desk rec start :0` ... `desk rec stop :0`.
