@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -114,11 +115,11 @@ func startSegment(display, path string, env []string) (*segment, error) {
 	// First progress block (~0.5 s in) = frames are being encoded
 	started := make(chan struct{})
 	go func() {
+		var once sync.Once
 		lines := bufio.NewScanner(progress)
 		for lines.Scan() {
-			if strings.HasPrefix(lines.Text(), "progress=") && started != nil {
-				close(started)
-				started = nil
+			if strings.HasPrefix(lines.Text(), "progress=") {
+				once.Do(func() { close(started) })
 			}
 		}
 	}()

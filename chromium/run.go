@@ -16,7 +16,7 @@ import (
 // A run is one start: a directory in runsDir() holding small files
 //
 //	profile        the profile's path
-//	temp-profile/  -profile temp's profile
+//	temp-profile/  --profile temp's profile
 //	display        the X display
 //	port           the DevTools port
 //	log            Chromium's output

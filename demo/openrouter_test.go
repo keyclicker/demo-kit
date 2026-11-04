@@ -80,3 +80,43 @@ func TestPCMInput(t *testing.T) {
 		}
 	}
 }
+
+// A busy API (in-flight budget full) is retried; other errors aren't
+func TestSynthesizeRetriesBusy(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/audio/speech" {
+				http.NotFound(w, r)
+				return
+			}
+			if calls++; calls == 1 {
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(http.StatusPaymentRequired)
+				w.Write([]byte(`{"error":{"metadata":{"reason":"in_flight_budget_exhausted"}}}`))
+				return
+			}
+			w.Write([]byte("pcm"))
+		}))
+	defer srv.Close()
+	apiBase = srv.URL
+
+	start := time.Now()
+	sp, err := synthesize(context.Background(), "k",
+		speechRequest{Model: "m", Input: "hi"})
+	if err != nil || string(sp.Audio) != "pcm" || calls != 2 {
+		t.Fatalf("got %+v, %v after %d calls", sp, err, calls)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatal("waited far too long")
+	}
+}
+
+func TestRetryAfter(t *testing.T) {
+	for in, want := range map[string]time.Duration{"120": 30 * time.Second,
+		"2": 2 * time.Second, "": 5 * time.Second, "x": 5 * time.Second} {
+		if got := retryAfter(in); got != want {
+			t.Errorf("retryAfter(%q) = %v, want %v", in, got, want)
+		}
+	}
+}

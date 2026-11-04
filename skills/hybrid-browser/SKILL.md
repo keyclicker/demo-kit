@@ -12,7 +12,7 @@ what it can't and shows the truth. 3x faster than either alone.
 
 ```sh
 D=$(desk new)                          # records until desk rm
-P=$(agent-chromium start -display $D)  # prints its port
+P=$(agent-chromium start --display $D)  # prints its port
 agent-browser connect $P
 # ...work...
 agent-chromium stop $P
@@ -23,7 +23,7 @@ desk rm $D
 
 - Default: a fresh temp profile, deleted on stop. Agents run in
   parallel
-- `-profile main`: the user's own Chromium, with their accounts.
+- `--profile main`: the user's own Chromium, with their accounts.
   Only when the user asks for it. One at a time: if `start` refuses,
   wait or ask the user to close theirs
 - Logged out, captcha, 2FA: ask the user

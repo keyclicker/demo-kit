@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"context"
 	_ "embed"
-	"flag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 	"image"
 	"image/color"
 	"image/draw"
@@ -1038,7 +1038,7 @@ func wrapTokens(runs []run, cols int) [][]run {
 
 // ---- demo code ----
 
-// cmdCode draws a source file (or with -diff a git diff, with -tree a
+// cmdCode draws a source file (or with --diff a git diff, with --tree a
 // file tree) as a PNG and lists what it drew: a code scene's preview.
 func cmdCode(args []string) error {
 	fs := flag.NewFlagSet("code", flag.ExitOnError)
@@ -1046,8 +1046,8 @@ func cmdCode(args []string) error {
 	split := fs.Bool("split", false, "a diff side by side: old left, new right")
 	tree := fs.Bool("tree", false, "the arg is a directory: draw its file tree")
 	depth := fs.Int("depth", 0, "tree depth (default 3)")
-	out := fs.String("o", "", "PNG to write (default ~/tmp/demo/code-<time>.png)")
-	unified := fs.Int("U", 3, "diff context lines")
+	out := fs.StringP("out", "o", "", "PNG to write (default ~/tmp/demo/code-<time>.png)")
+	unified := fs.IntP("unified", "U", 3, "diff context lines")
 	picks := fs.String("hunks", "", "diff hunks to keep, e.g. 1,3 (default all)")
 	lines := fs.String("lines", "", "line range to keep, e.g. 120-160")
 	focus := fs.String("focus", "", "line range to highlight, e.g. 130-138")
@@ -1057,11 +1057,13 @@ func cmdCode(args []string) error {
 
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: demo code [flags] FILE\n"+
-			"       demo code -tree [-depth N] [flags] DIR\n"+
-			"       demo code -diff [flags] -- [git diff args]\n"+
-			"  e.g. demo code -diff -- origin/master...HEAD -- dir/\n")
+			"       demo code --tree [--depth N] [flags] DIR\n"+
+			"       demo code --diff [flags] -- [git diff args]\n"+
+			"  e.g. demo code --diff -- origin/master...HEAD -- dir/\n")
 		fs.PrintDefaults()
 	}
+	// Flags first: what follows goes to git as is, -- and all
+	fs.SetInterspersed(false)
 	fs.Parse(args)
 
 	spec := CodeSpec{Context: *unified, Split: *split, Depth: *depth}
@@ -1171,7 +1173,7 @@ func parseHunkList(s string) ([]int, error) {
 	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' }) {
 		n, err := strconv.Atoi(strings.TrimSpace(f))
 		if err != nil || n < 1 {
-			return nil, fmt.Errorf("-hunks %q: want numbers like 1,3", s)
+			return nil, fmt.Errorf("--hunks %q: want numbers like 1,3", s)
 		}
 		out = append(out, n)
 	}

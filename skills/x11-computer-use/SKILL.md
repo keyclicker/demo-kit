@@ -20,7 +20,7 @@ desk rm :10                 # when done; prints the video path and URL
 ```
 
 Too sluggish or broken there? Use the user's `:0`, claimed first:
-`desk claim` (exit 3 = user active: ask, then `desk claim -force`),
+`desk claim` (exit 3 = user active: ask, then `desk claim --force`),
 `desk release` and close your windows when done.
 
 - Prefix every command: `DISPLAY=:10 …` (shell state doesn't persist)
@@ -43,7 +43,7 @@ don't send it.
 
 `desk new` records until `desk rm`, which saves the video. Long dead
 time (installs, builds, waits): `desk rec pause :N`, then `resume`.
-Need custom clips (a demo video, the `demo` skill): `desk new -no-rec`,
+Need custom clips (a demo video, the `demo` skill): `desk new --no-rec`,
 then `desk rec start [-o FILE] :N` and `desk rec stop :N`.
 
 On `:0`, after `desk claim`: `desk rec start :0` ... `desk rec stop :0`.

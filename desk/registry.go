@@ -3,8 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,7 +35,7 @@ const (
 
 var sizeRE = regexp.MustCompile(`^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$`)
 
-// Desktop is one noVNC-reachable display, as `desk ls -json` prints it.
+// Desktop is one noVNC-reachable display, as `desk ls --json` prints it.
 type Desktop struct {
 	Display string `json:"display"`
 	Token   string `json:"token"`
@@ -88,7 +88,7 @@ func unitAlive(unit string) bool {
 
 // cmdNew starts desk-N on the lowest free display and prints ":N" once
 // the desktop is ready for clients. It belongs to the calling agent,
-// records itself (unless -no-rec), and goes away when that agent exits.
+// records itself (unless --no-rec), and goes away when that agent exits.
 func cmdNew(args []string) error {
 	fs := flag.NewFlagSet("new", flag.ExitOnError)
 	size := fs.String("size", "1280x960", "screen size, WxH")
@@ -102,7 +102,7 @@ func cmdNew(args []string) error {
 	}
 
 	if !sizeRE.MatchString(*size) {
-		return fmt.Errorf("-size %q: want WxH, e.g. 1280x960", *size)
+		return fmt.Errorf("--size %q: want WxH, e.g. 1280x960", *size)
 	}
 
 	self, err := os.Executable()
@@ -130,7 +130,7 @@ func cmdNew(args []string) error {
 		"--unit="+unit, fmt.Sprintf("--description=desk :%d", n),
 		"--property=Type=notify", "--property=TimeoutStartSec=30",
 		fmt.Sprintf("--property=ExecStopPost=%s cleanup %d", self, n),
-		self, "run", fmt.Sprintf("-owner=%d:%d", owner.PID, owner.Start),
+		self, "run", fmt.Sprintf("--owner=%d:%d", owner.PID, owner.Start),
 		strconv.Itoa(n), *size)
 	start.Stderr = os.Stderr
 
@@ -205,7 +205,7 @@ func cmdList(args []string) error {
 	return nil
 }
 
-// cmdRemove stops desk displays. Only the caller's own, unless -force:
+// cmdRemove stops desk displays. Only the caller's own, unless --force:
 // parallel agents must not pull each other's desktops away.
 func cmdRemove(args []string) error {
 	fs := flag.NewFlagSet("rm", flag.ExitOnError)
@@ -263,7 +263,7 @@ func cmdRemove(args []string) error {
 				owner = o.String()
 			}
 			return fmt.Errorf(":%d belongs to %s, not you (%s); "+
-				"-force to stop it anyway", n, owner, me)
+				"--force to stop it anyway", n, owner, me)
 		}
 
 		targets = append(targets, n)
@@ -273,7 +273,7 @@ func cmdRemove(args []string) error {
 		if *all {
 			return nil
 		}
-		return errors.New("nothing to remove: pass :N... or -all")
+		return errors.New("nothing to remove: pass :N... or --all")
 	}
 
 	// ---- Stop ----

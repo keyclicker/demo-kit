@@ -138,13 +138,13 @@ func parseOwnerLine(line string) (o Owner, ok bool) {
 	return Owner{PID: pid, Start: start, Name: parts[2]}, true
 }
 
-// parseOwnerArg decodes `desk run`'s -owner value, "PID:START".
+// parseOwnerArg decodes `desk run`'s --owner value, "PID:START".
 func parseOwnerArg(s string) (Owner, error) {
 	pidStr, startStr, found := strings.Cut(s, ":")
 	pid, err1 := strconv.Atoi(pidStr)
 	start, err2 := strconv.ParseUint(startStr, 10, 64)
 	if !found || err1 != nil || err2 != nil {
-		return Owner{}, fmt.Errorf("-owner %q: want PID:START", s)
+		return Owner{}, fmt.Errorf("--owner %q: want PID:START", s)
 	}
 
 	o, err := procOwner(pid)

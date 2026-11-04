@@ -2,8 +2,8 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -62,7 +62,7 @@ func parseUserDisplay(s string) (int, error) {
 
 // cmdClaim gives the caller exclusive use of a user display (:0). It
 // goes through silently once the user has been idle long enough; else
-// the agent has to ask, then retry with -force.
+// the agent has to ask, then retry with --force.
 func cmdClaim(args []string) error {
 	fs := flag.NewFlagSet("claim", flag.ExitOnError)
 	force := fs.Bool("force", false, "claim even though the user is active")
@@ -107,7 +107,7 @@ func cmdClaim(args []string) error {
 		if idle < *idleMin {
 			fmt.Fprintf(os.Stderr, "desk: the user is active on :%d "+
 				"(last input %s ago): ask them first, then "+
-				"`desk claim -force`\n", n, idle.Round(time.Second))
+				"`desk claim --force`\n", n, idle.Round(time.Second))
 			return errUserActive
 		}
 	}
@@ -142,7 +142,7 @@ func cmdRelease(args []string) error {
 	case o == nil:
 		return nil
 	case !o.Same(me) && !*force:
-		return fmt.Errorf(":%d is claimed by %s, not you; -force to "+
+		return fmt.Errorf(":%d is claimed by %s, not you; --force to "+
 			"drop it anyway", n, o)
 	}
 

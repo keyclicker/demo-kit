@@ -2,8 +2,8 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 	"log"
 	"os"
 	"os/exec"
@@ -34,7 +34,7 @@ const (
 	statePrefix = "# state: "
 )
 
-// Recording is a running desk-rec-N, as `desk ls -json` prints it.
+// Recording is a running desk-rec-N, as `desk ls --json` prints it.
 type Recording struct {
 	Video  string `json:"video"`
 	Paused bool   `json:"paused"`
@@ -121,8 +121,18 @@ func parseRecDisplay(s string) (int, error) {
 	return parseUserDisplay(s)
 }
 
-// printRecording reports a finished video: path, and its tailnet URL.
+// printRecording reports a finished video: path, and its tailnet URL;
+// or, when the join failed, the parts left behind.
 func printRecording(n int, video string) {
+	if !exists(video) {
+		parts, _ := filepath.Glob(strings.TrimSuffix(video, ".mp4") +
+			".part*.mp4")
+		fmt.Printf(":%d recording not saved: %s (parts kept: %s; see "+
+			"journalctl --user -u %s)\n", n, video,
+			strings.Join(parts, " "), recUnitName(n))
+		return
+	}
+
 	fmt.Printf(":%d recording: %s\n", n, video)
 	if u := recordingURL(video); u != "" {
 		fmt.Printf(":%d url: %s\n", n, u)
@@ -132,13 +142,13 @@ func printRecording(n int, video string) {
 // ---- Commands ----
 
 const recUsage = `usage:
-  desk rec start [-o FILE] [-force] :N   record (default ~/public/recordings)
-  desk rec pause [-force] :N             stop grabbing, keep the video open
-  desk rec resume [-force] :N            grab again, into the same video
-  desk rec stop [-force] :N              finish: join, print path and URL
+  desk rec start [-o FILE] [--force] :N  record (default ~/public/recordings)
+  desk rec pause [--force] :N            stop grabbing, keep the video open
+  desk rec resume [--force] :N           grab again, into the same video
+  desk rec stop [--force] :N             finish: join, print path and URL
 
-desk new records by itself (desk new -no-rec doesn't); desk rm saves it.
-:0 needs your desk claim. -force: someone else's desktop or recording.
+desk new records by itself (desk new --no-rec doesn't); desk rm saves it.
+:0 needs your desk claim. --force: someone else's desktop or recording.
 `
 
 // cmdRec dispatches `desk rec SUBCOMMAND`.
@@ -179,7 +189,7 @@ func cmdRec(args []string) error {
 // desk display, or a user display it claimed.
 func cmdRecStart(args []string) error {
 	fs := flag.NewFlagSet("rec start", flag.ExitOnError)
-	out := fs.String("o", "", "video file (default ~/public/recordings/...)")
+	out := fs.StringP("out", "o", "", "video file (default ~/public/recordings/...)")
 	force := fs.Bool("force", false, "record another agent's display")
 	fs.Parse(args)
 
@@ -226,7 +236,7 @@ func cmdRecStart(args []string) error {
 }
 
 // checkRecordable allows a desk display the caller owns, or a user
-// display it claimed; -force skips the owner check.
+// display it claimed; --force skips the owner check.
 func checkRecordable(n int, me Owner, force bool) error {
 	if n < firstDisplay {
 		if o := readClaim(n); o == nil || !o.Same(me) {
@@ -245,7 +255,7 @@ func checkRecordable(n int, me Owner, force bool) error {
 			continue
 		}
 		if !force && (d.Owner == nil || !d.Owner.Same(me)) {
-			return fmt.Errorf(":%d isn't yours; -force to record it "+
+			return fmt.Errorf(":%d isn't yours; --force to record it "+
 				"anyway", n)
 		}
 		return nil
@@ -261,6 +271,13 @@ func startRec(n int, owner Owner, video string) error {
 	if unitAlive(unit) {
 		return fmt.Errorf(":%d is already recording (desk rec stop :%d)",
 			n, n)
+	}
+
+	// Never record over a video, or over a crashed run's parts
+	for _, p := range []string{video, partPath(video, 1)} {
+		if exists(p) {
+			return fmt.Errorf("%s exists: record to another file", p)
+		}
 	}
 
 	self, err := os.Executable()
@@ -293,8 +310,8 @@ func startRec(n int, owner Owner, video string) error {
 	}
 
 	run = append(run, self, "rec", "run",
-		fmt.Sprintf("-owner=%d:%d", owner.PID, owner.Start),
-		"-o="+video, strconv.Itoa(n))
+		fmt.Sprintf("--owner=%d:%d", owner.PID, owner.Start),
+		"--out="+video, strconv.Itoa(n))
 
 	start := exec.Command("systemd-run", run...)
 	start.Stderr = os.Stderr
@@ -362,7 +379,7 @@ func cmdRecStop(args []string) error {
 	return nil
 }
 
-// ownRec parses `[-force] :N` and checks the caller owns that display's
+// ownRec parses `[--force] :N` and checks the caller owns that display's
 // running recording.
 func ownRec(args []string) (int, error) {
 	fs := flag.NewFlagSet("rec", flag.ExitOnError)
@@ -371,7 +388,7 @@ func ownRec(args []string) (int, error) {
 
 	if fs.NArg() != 1 {
 		return 0, errors.New("usage: desk rec pause|resume|stop " +
-			"[-force] :N")
+			"[--force] :N")
 	}
 
 	n, err := parseRecDisplay(fs.Arg(0))
@@ -391,7 +408,7 @@ func ownRec(args []string) (int, error) {
 
 	if !*force && !r.Owner.Same(me) {
 		return 0, fmt.Errorf(":%d's recording belongs to %s, not you "+
-			"(%s); -force to touch it anyway", n, r.Owner, me)
+			"(%s); --force to touch it anyway", n, r.Owner, me)
 	}
 
 	return n, nil
@@ -403,11 +420,11 @@ func ownRec(args []string) (int, error) {
 func cmdRecRun(args []string) error {
 	fs := flag.NewFlagSet("rec run", flag.ExitOnError)
 	ownerArg := fs.String("owner", "", "owning process, PID:START")
-	video := fs.String("o", "", "the finished video")
+	video := fs.StringP("out", "o", "", "the finished video")
 	fs.Parse(args)
 
 	if fs.NArg() != 1 || *video == "" {
-		return errors.New("usage: desk rec run -owner PID:START -o FILE N")
+		return errors.New("usage: desk rec run --owner PID:START -o FILE N")
 	}
 
 	owner, err := parseOwnerArg(*ownerArg)
@@ -427,7 +444,9 @@ func cmdRecRun(args []string) error {
 	}
 
 	// Handlers first: a pause sent right after start must not kill us
-	sigs := make(chan os.Signal, 1)
+	// Room for a burst: a pause can block for seconds, and a stop
+	// arriving meanwhile must not be dropped
+	sigs := make(chan os.Signal, 8)
 	signal.Notify(sigs, recPause, recResume, syscall.SIGTERM, syscall.SIGINT)
 
 	if err := r.resume(); err != nil {
@@ -441,6 +460,7 @@ func cmdRecRun(args []string) error {
 	}
 
 	if err := notify("READY=1"); err != nil {
+		r.finish()
 		return err
 	}
 

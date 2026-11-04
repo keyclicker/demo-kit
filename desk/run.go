@@ -4,8 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 	"log"
 	"net"
 	"os"
@@ -36,7 +36,7 @@ func cmdRun(args []string) error {
 	args = fs.Args()
 
 	if len(args) != 2 {
-		return errors.New("usage: desk run -owner PID:START N WxH")
+		return errors.New("usage: desk run --owner PID:START N WxH")
 	}
 
 	owner, err := parseOwnerArg(*ownerArg)
@@ -172,6 +172,17 @@ func cmdRun(args []string) error {
 
 	case <-ownerGone:
 		log.Printf("owner %s exited, closing", owner)
+
+		// The recording first: After= orders only stop jobs, and this
+		// exit isn't one. Blocks until its video is joined.
+		if unitAlive(recUnitName(n)) {
+			rec := exec.Command("systemctl", "--user", "stop",
+				recUnitName(n))
+			if err := rec.Run(); err != nil {
+				log.Printf("stop %s: %v", recUnitName(n), err)
+			}
+		}
+
 		stopAll()
 		return nil
 
