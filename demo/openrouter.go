@@ -14,6 +14,9 @@ import (
 
 var apiBase = "https://openrouter.ai/api/v1"
 
+// apiClient gives up on a stalled request: a demo build must end
+var apiClient = &http.Client{Timeout: 2 * time.Minute}
+
 // speechRequest is the body of POST /audio/speech. Empty fields are
 // left out, so the provider's defaults apply.
 type speechRequest struct {
@@ -54,6 +57,9 @@ func synthesize(ctx context.Context, key string,
 	}
 	if res.StatusCode != http.StatusOK {
 		return speech{}, fmt.Errorf("%s %s: %s", req.Model, res.Status, audio)
+	}
+	if len(audio) == 0 {
+		return speech{}, fmt.Errorf("%s: empty audio", req.Model)
 	}
 
 	return speech{
@@ -134,5 +140,5 @@ func call(ctx context.Context, key, method, path string,
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 
-	return http.DefaultClient.Do(req)
+	return apiClient.Do(req)
 }

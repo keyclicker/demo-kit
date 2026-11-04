@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -70,6 +71,12 @@ func speak(ctx context.Context, key string, v Voice,
 	if err != nil {
 		return spoken{}, err
 	}
+
+	// One synthesis per line: a script saying it twice waits, then hits
+	// the cache, instead of paying twice and racing on the file
+	lock := speaking.lock(wav)
+	defer lock.Unlock()
+
 	if _, err := os.Stat(wav); err == nil {
 		return spoken{Wav: wav}, nil
 	}
@@ -84,16 +91,44 @@ func speak(ctx context.Context, key string, v Voice,
 		return spoken{}, err
 	}
 
-	// Write aside, then rename: parallel builds never read half a wav
-	tmp := wav + fmt.Sprintf(".%d.wav", os.Getpid())
-	if err := transcode(ctx, sp, v.Tempo, tmp); err != nil {
+	// Write aside, then rename: other builds never read half a wav
+	f, err := os.CreateTemp(filepath.Dir(wav), "part-*.wav")
+	if err != nil {
 		return spoken{}, err
 	}
-	if err := os.Rename(tmp, wav); err != nil {
+	f.Close()
+	defer os.Remove(f.Name())
+
+	if err := transcode(ctx, sp, v.Tempo, f.Name()); err != nil {
+		return spoken{}, err
+	}
+	if err := os.Rename(f.Name(), wav); err != nil {
 		return spoken{}, err
 	}
 
 	return spoken{Wav: wav, GenID: sp.GenID}, nil
+}
+
+// keyLocks hands out one mutex per key.
+type keyLocks struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+var speaking = keyLocks{locks: map[string]*sync.Mutex{}}
+
+// lock locks key's mutex and returns it, for Unlock.
+func (k *keyLocks) lock(key string) *sync.Mutex {
+	k.mu.Lock()
+	m := k.locks[key]
+	if m == nil {
+		m = &sync.Mutex{}
+		k.locks[key] = m
+	}
+	k.mu.Unlock()
+
+	m.Lock()
+	return m
 }
 
 // cachePath names the cached wav of text in voice v.

@@ -71,3 +71,11 @@ func TestFFMetadata(t *testing.T) {
 		}
 	}
 }
+
+// Widths are in characters: Cyrillic is two bytes each
+func TestSplitWordsRunes(t *testing.T) {
+	s := strings.TrimSpace(strings.Repeat("слово ", 12)) // 71 runes
+	if got := splitWords(s, 80); len(got) != 1 {
+		t.Fatalf("71 runes split in %d", len(got))
+	}
+}

@@ -97,3 +97,12 @@ func TestPagedY(t *testing.T) {
 		t.Fatalf("three pages: %s", got)
 	}
 }
+
+func TestPageCount(t *testing.T) {
+	for tall, want := range map[int]int{frameH: 1, frameH + 1: 2,
+		frameH + pageStep: 2, frameH + pageStep + 1: 3} {
+		if got := pageCount(tall); got != want {
+			t.Errorf("pageCount(%d) = %d, want %d", tall, got, want)
+		}
+	}
+}

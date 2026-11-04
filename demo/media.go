@@ -11,10 +11,15 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// renderNode is the 890M's render-only DRM node, for VAAPI encoding.
-const renderNode = "/dev/dri/renderD128"
+const (
+	// renderNode is the 890M's render-only DRM node, for VAAPI encoding
+	renderNode = "/dev/dri/renderD128"
+
+	ffmpegTimeout = 10 * time.Minute
+)
 
 // ffmpeg runs ffmpeg quietly in dir (empty: here), overwriting
 // outputs, with stdin as input.
@@ -26,6 +31,11 @@ func ffmpeg(ctx context.Context, dir string, stdin []byte,
 		// ffmpeg reads keys from a terminal stdin, and stalls on them
 		base = append(base, "-nostdin")
 	}
+
+	// Nothing here should take this long: a hung ffmpeg (bad input
+	// under -loop 1 retries forever) must not hang the build
+	ctx, cancel := context.WithTimeout(ctx, ffmpegTimeout)
+	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", append(base, args...)...)
 	cmd.Dir = dir

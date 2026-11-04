@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // ---- Captions ----
@@ -36,7 +37,7 @@ func narrationCues(text string, start, dur float64) []cue {
 
 	total := 0
 	for _, c := range chunks {
-		total += len(c)
+		total += utf8.RuneCountInString(c)
 	}
 	if total == 0 {
 		return nil
@@ -45,7 +46,7 @@ func narrationCues(text string, start, dur float64) []cue {
 	cues := make([]cue, 0, len(chunks))
 	at := start
 	for _, c := range chunks {
-		d := dur * float64(len(c)) / float64(total)
+		d := dur * float64(utf8.RuneCountInString(c)) / float64(total)
 		cues = append(cues, cue{at, at + d, c})
 		at += d
 	}
@@ -73,30 +74,33 @@ func splitSentences(text string) []string {
 	return out
 }
 
-// splitWords cuts s into pieces of at most n bytes at spaces, as even
-// as it can, so a long sentence becomes balanced cues.
+// splitWords cuts s into pieces of at most n characters at spaces, as
+// even as it can, so a long sentence becomes balanced cues.
 func splitWords(s string, n int) []string {
-	if len(s) <= n {
+	runes := utf8.RuneCountInString
+	if runes(s) <= n {
 		return []string{s}
 	}
 
-	pieces := (len(s) + n - 1) / n
-	target := len(s) / pieces
+	pieces := (runes(s) + n - 1) / n
+	target := runes(s) / pieces
 
 	var out []string
-	var cur strings.Builder
+	var cur []string
+	used := 0
 	for _, w := range strings.Fields(s) {
-		if cur.Len() > 0 && (cur.Len()+1+len(w) > n || cur.Len() >= target) {
-			out = append(out, cur.String())
-			cur.Reset()
+		if used > 0 && (used+1+runes(w) > n || used >= target) {
+			out = append(out, strings.Join(cur, " "))
+			cur, used = nil, 0
 		}
-		if cur.Len() > 0 {
-			cur.WriteByte(' ')
+		if used > 0 {
+			used++
 		}
-		cur.WriteString(w)
+		cur = append(cur, w)
+		used += runes(w)
 	}
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
+	if len(cur) > 0 {
+		out = append(out, strings.Join(cur, " "))
 	}
 	return out
 }
