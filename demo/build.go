@@ -417,11 +417,15 @@ func (b *builder) scenePath(i int, ext string) string {
 }
 
 // Every scene video comes out alike, so the concat demuxer can join
-// them: 1280x960 (letterboxed), 30 fps, yuv420p, lossless-ish x264.
+// them: 1280x960 (letterboxed), 30 fps, yuv420p BT.709 limited range,
+// lossless-ish x264. Sources differ (recordings, PNGs): a change of
+// format mid-stream breaks the final GPU encode.
 var (
 	fitFilter = fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio="+
-		"decrease,pad=%d:%d:-1:-1:color=0x0d1117,setsar=1,fps=%d,"+
-		"format=yuv420p", frameW, frameH, frameW, frameH, fps)
+		"decrease:out_range=tv:out_color_matrix=bt709,"+
+		"pad=%d:%d:-1:-1:color=0x0d1117,setsar=1,fps=%d,format=yuv420p,"+
+		"setparams=range=tv:colorspace=bt709:color_primaries=bt709:"+
+		"color_trc=bt709", frameW, frameH, frameW, frameH, fps)
 
 	sceneCodec = []string{"-an", "-c:v", "libx264", "-preset", "veryfast",
 		"-crf", "16"}

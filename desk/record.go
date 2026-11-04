@@ -88,9 +88,13 @@ func startSegment(display, path string, env []string) (*segment, error) {
 		"-vaapi_device", renderNode,
 		"-f", "x11grab", "-framerate", "30", "-i", display,
 
-		// nv12 (yuv420p) plays everywhere but needs even sides
+		// nv12 (yuv420p) plays everywhere but needs even sides. Tagged
+		// BT.709 limited range: left alone, the RGB source's tags (pc,
+		// gbr) stick to YUV frames, and players guess colors
 		"-vf", "hwupload,"+
-			"scale_vaapi=w=trunc(iw/2)*2:h=trunc(ih/2)*2:format=nv12",
+			"scale_vaapi=w=trunc(iw/2)*2:h=trunc(ih/2)*2:format=nv12:"+
+			"out_range=tv:out_color_matrix=bt709:"+
+			"out_color_primaries=bt709:out_color_transfer=bt709",
 		"-c:v", "h264_vaapi", "-qp", "28",
 		"-movflags", "+faststart", path)
 	cmd.Env = env

@@ -139,8 +139,20 @@ func readSource(path string) (*listing, error) {
 			Pos: n, Text: line})
 	}
 
-	file := &codeFile{Path: path, Hunks: []*hunk{h}}
+	file := &codeFile{Path: homePath(path), Hunks: []*hunk{h}}
 	return &listing{Files: []*codeFile{file}}, nil
+}
+
+// homePath shortens a path under $HOME to ~/..., for headers.
+func homePath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if rel, ok := strings.CutPrefix(path, home+"/"); ok {
+		return "~/" + rel
+	}
+	return path
 }
 
 // readDiff runs `git diff` with spec's args and context, and keeps the
