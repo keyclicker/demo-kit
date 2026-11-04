@@ -78,6 +78,12 @@ demo code --tree --depth 2 desk      # a file tree, numbered for focus
 ```
 
 Speech: `demo say "a line"` plays it; voices and tempo in `demo say -h`.
+The voice takes direction: `instructions` is plain English (pace,
+mood, role), and Gemini acts on it. A scene's `voice` changes only the
+fields it sets: `{"voice": {"instructions": "Slower, serious: this is
+the risky part."}}`. Keep the tuned default for most scenes; direct
+the few where the tone turns (a warning, a punchline, the end card).
+No inline tags like `[laughs]` in the text: unverified.
 
 Edit it all: `demo build $W/demo.json`, run from the repo (code paths,
 git and term commands resolve against the current directory). Speech
@@ -93,7 +99,8 @@ captions) and `--scene 3` preview into `~/tmp/demo`.
   {"image": "artifacts/before.png", "steps": [
     {"say": "..."}, {"say": "...", "box": [880, 140, 300, 60]},
     {"say": "...", "arrow": [1030, 400]}]},
-  {"clip": "artifacts/pause.mp4", "from": 3, "to": 20, "say": "..."},
+  {"clip": "artifacts/pause.mp4", "from": 3, "to": 20, "steps": [
+    {"say": "..."}, {"say": "...", "zoom": [960, 80, 240, 220]}]},
   {"term": {"run": ["desk new --no-rec", "desk ls"]}, "steps": [
     {"say": "..."}, {"say": "..."}]},
   {"code": {"file": "desk/rec.go", "lines": [440, 480]}, "steps": [
@@ -109,9 +116,9 @@ captions) and `--scene 3` preview into `~/tmp/demo`.
 
 Every field, one line each: `demo build -h`. Narration sets each
 scene's length; steps point at the picture as they're said (a code
-focus, an image's box or arrow, a terminal's next command).
-Recordings lose idle frames and speed up to fit. Mistakes fail with a
-reason.
+focus, an image's box or arrow, a clip's zoom, a terminal's next
+command). Recordings lose idle frames and speed up to fit. Mistakes
+fail with a reason.
 
 Lists, notes and anything longer than a slide: write markdown into
 `artifacts/` and show it as `code`, a step per point with its focus.
