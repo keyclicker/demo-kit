@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"flag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 	"io"
 	"os"
 	"os/exec"
@@ -182,7 +182,7 @@ func apiKey(ctx context.Context) (string, error) {
 func cmdSay(args []string) error {
 	fs := flag.NewFlagSet("say", flag.ExitOnError)
 	v := voiceFlags(fs)
-	out := fs.String("o", "", "also save the audio here (format by extension)")
+	out := fs.StringP("out", "o", "", "also save the audio here (format by extension)")
 	noPlay := fs.Bool("no-play", false, "don't play, e.g. with -o")
 	showCost := fs.Bool("cost", false, "print the request's cost in USD")
 
@@ -234,7 +234,7 @@ func cmdSay(args []string) error {
 	return nil
 }
 
-// voiceFlags registers -model, -voice, -instructions and -tempo.
+// voiceFlags registers --model, --voice, --instructions and --tempo.
 func voiceFlags(fs *flag.FlagSet) *Voice {
 	v := defaultVoice
 	fs.StringVar(&v.Model, "model", v.Model, "OpenRouter TTS model")

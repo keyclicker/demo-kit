@@ -17,22 +17,22 @@ import (
 
 const usageText = `desk: disposable X displays for agents
 
-  desk new [-size WxH] [-no-rec] start a recorded desktop, print :N
-  desk ls [-json]                list desktops, owners, recordings
-  desk rm [-force] :N... | -all  stop your desktops (-force: anyone's),
-                                 print their finished videos (path, URL)
+  desk new [--size WxH] [--no-rec]   start a recorded desktop, print :N
+  desk ls [--json]                   list desktops, owners, recordings
+  desk rm [--force] :N... | --all    stop your desktops (--force: anyone's),
+                                     print their finished videos (path, URL)
 
   desk rec start|pause|resume|stop :N
-                                 record by hand: pauses, custom files,
-                                 :0 (claimed). desk rec -h for details
+                                     record by hand: pauses, custom files,
+                                     :0 (claimed). desk rec -h for details
 
-  desk claim [-force] [:0]       take the user's :0 for yourself
-  desk release [:0]              give it back
+  desk claim [--force] [:0]          take the user's :0 for yourself
+  desk release [:0]                  give it back
 
 A desktop or claim belongs to the agent that ran desk (the first
 non-shell ancestor, or $DESK_OWNER_PID) and ends when that agent exits.
 claim exits 3 while the user is active (input in the last 10 min): ask
-them, then claim -force. Another agent's claim always blocks.
+them, then claim --force. Another agent's claim always blocks.
 
 Oneliner:  DISPLAY=$(desk new) xterm &
 `

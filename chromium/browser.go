@@ -2,8 +2,8 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 	"net"
 	"net/http"
 	"os"
@@ -124,7 +124,7 @@ func cmdStart(args []string) error {
 
 	// No $DISPLAY fallback: agents inherit the user's :0
 	if *display == "" {
-		return errors.New("start: -display required (desk new gives one)")
+		return errors.New("start: --display required (desk new gives one)")
 	}
 
 	// One start at a time: no two pick the same port or profile
@@ -177,7 +177,7 @@ func cmdStart(args []string) error {
 	return nil
 }
 
-// prepareProfile resolves -profile for run r: a fresh one inside r for
+// prepareProfile resolves --profile for run r: a fresh one inside r for
 // temp. Refuses a profile some browser has open: Chromium would hand
 // the launch to it.
 func prepareProfile(name string, r run) (string, error) {
@@ -205,7 +205,7 @@ func prepareProfile(name string, r run) (string, error) {
 		return "", err
 	} else if b != nil {
 		return "", fmt.Errorf("profile in use (pid %d): one browser per "+
-			"profile, or -profile temp", b.PID)
+			"profile, or --profile temp", b.PID)
 	}
 
 	// The user's own settings stay theirs

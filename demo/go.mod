@@ -4,6 +4,7 @@ go 1.26.8
 
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0
+	github.com/spf13/pflag v1.0.10
 	golang.org/x/image v0.47.0
 )
 

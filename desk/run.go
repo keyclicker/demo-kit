@@ -4,8 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 	"log"
 	"net"
 	"os"
@@ -36,7 +36,7 @@ func cmdRun(args []string) error {
 	args = fs.Args()
 
 	if len(args) != 2 {
-		return errors.New("usage: desk run -owner PID:START N WxH")
+		return errors.New("usage: desk run --owner PID:START N WxH")
 	}
 
 	owner, err := parseOwnerArg(*ownerArg)

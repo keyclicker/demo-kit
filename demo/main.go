@@ -12,14 +12,14 @@ import (
 
 const usageText = `demo: narrated demo and explainer videos, and speech
 
-  demo build [-o FILE] [-keep] script.json
+  demo build [-o FILE] [--keep] script.json
                          render scenes into one mp4: narrated, fast-cut,
                          captioned, with chapters; prints path, URL, cost
-  demo code [-lines A-B] [-focus A-B] FILE
-  demo code -tree [-depth N] [-lines A-B] [-focus A-B] DIR
-  demo code -diff [-split] [-hunks 1,3] [-lines A-B] [-focus A-B] -- [git args]
+  demo code [--lines A-B] [--focus A-B] FILE
+  demo code --tree [--depth N] [--lines A-B] [--focus A-B] DIR
+  demo code --diff [--split] [--hunks 1,3] [--lines A-B] [--focus A-B] -- [git args]
                          draw code as a code scene would, list its parts
-  demo say [-o FILE] [-no-play] [-cost] [text...]
+  demo say [-o FILE] [--no-play] [--cost] [text...]
                          speak on :0's speaker (no text: stdin)
 
 Recordings come from desk (desk new records; desk rec for more).

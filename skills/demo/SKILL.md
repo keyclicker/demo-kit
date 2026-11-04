@@ -46,7 +46,7 @@ Record anything on a desk display, driven with `x11-computer-use` or
 
 ```sh
 W=~/public/demos/demo-kit-desk-rec; mkdir -p $W/artifacts
-D=$(desk new -no-rec)
+D=$(desk new --no-rec)
 desk rec start -o $W/artifacts/pause.mp4 $D   # act; pause/resume skip dead time
 desk rec stop $D
 ```
@@ -63,15 +63,17 @@ DISPLAY=$D ZDOTDIR=$S/zsh setsid -f ghostty \
 Code is drawn, not filmed. Preview what a scene will show:
 
 ```sh
-demo code -lines 440-480 -focus 452-462 -mark 'r.resume()' desk/rec.go
-demo code -diff -- origin/master...HEAD -- desk/   # numbered hunks
-demo code -diff -split -hunks 3 -- origin/master...HEAD -- desk/run.go
-demo code -tree -depth 2 desk      # a file tree, numbered for focus
+demo code --lines 440-480 --focus 452-462 --mark 'r.resume()' desk/rec.go
+demo code --diff -- origin/master...HEAD -- desk/   # numbered hunks
+demo code --diff --split --hunks 3 -- origin/master...HEAD -- desk/run.go
+demo code --tree --depth 2 desk      # a file tree, numbered for focus
 ```
 
 Speech: `demo say "a line"` plays it; voices and tempo in `demo say -h`.
 
-Edit it all: `demo build $W/demo.json` (speech cached, rebuild freely).
+Edit it all: `demo build $W/demo.json`, run from the repo (code paths
+and git resolve against the current directory). Speech is cached:
+rebuild freely.
 
 ## Script
 

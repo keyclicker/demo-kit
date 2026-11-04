@@ -20,15 +20,15 @@ import (
 
 const usageText = `agent-chromium: the agents' browser (Flatpak Chromium)
 
-  agent-chromium start -display :N [-profile P] [URL...]
+  agent-chromium start --display :N [--profile P] [URL...]
                           launch it on display :N, print its DevTools port
   agent-chromium status   list running ones; exit 1 if none
   agent-chromium stop PORT
                           close it gracefully
 
-  -profile temp           fresh and empty, deleted on exit (default)
-  -profile main           the user's own: their accounts, their settings
-  -profile DIR            any other
+  --profile temp          fresh and empty, deleted on exit (default)
+  --profile main          the user's own: their accounts, their settings
+  --profile DIR           any other
 
 temp runs in parallel. main and DIR: one browser per profile, and
 start refuses while it's open anywhere, the user's Chromium included.

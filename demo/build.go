@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -244,7 +244,7 @@ func speedFor(clip, length float64) float64 {
 // chapters: demo.mp4 beside the script unless -o.
 func cmdBuild(args []string) error {
 	fs := flag.NewFlagSet("build", flag.ExitOnError)
-	out := fs.String("o", "", "video to write (default demo.mp4 beside "+
+	out := fs.StringP("out", "o", "", "video to write (default demo.mp4 beside "+
 		"the script)")
 	keep := fs.Bool("keep", false, "keep the work dir (scenes, captions)")
 
