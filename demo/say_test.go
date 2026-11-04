@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -43,4 +44,14 @@ func TestCachePathKeys(t *testing.T) {
 	if a != b || a == c || a == d {
 		t.Fatalf("cache paths: %s %s %s %s", a, b, c, d)
 	}
+}
+
+func TestKeyLocks(t *testing.T) {
+	k := keyLocks{locks: map[string]*sync.Mutex{}}
+	a := k.lock("x")
+	if k.locks["x"] != a {
+		t.Fatal("lock not kept per key")
+	}
+	a.Unlock()
+	k.lock("x").Unlock() // reusable once unlocked
 }

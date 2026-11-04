@@ -182,8 +182,9 @@ const (
 	stepGap = 0.25 // between steps
 	tailOut = 0.4  // after it
 
-	scrollSecs = 0.35 // a smooth focus change scrolls this long
-	pageStep   = 864  // px a tall still advances per page: 3 lines kept
+	scrollSecs = 0.35       // a smooth focus change scrolls this long
+	pageStep   = 864        // px a tall still advances per page: 3 lines kept
+	maxPanH    = 6 * frameH // a smooth pan hands ffmpeg the whole image
 
 	// maxSpeed warns past it: a clip that needs more is too long for
 	// its narration (cut From/To, or say more)
@@ -360,6 +361,10 @@ func (b *builder) build(ctx context.Context, video string) error {
 	style := "FontName=DejaVu Sans,FontSize=10,PrimaryColour=&H00FFFFFF," +
 		"BorderStyle=1,Outline=0,Shadow=0,MarginV=6"
 
+	// Written aside, then renamed: a failed build keeps the last video
+	partial := strings.TrimSuffix(video, ".mp4") + ".partial.mp4"
+	defer os.Remove(partial)
+
 	err := ffmpeg(ctx, b.work, nil,
 		"-vaapi_device", renderNode,
 		"-f", "concat", "-safe", "0", "-i", "video.txt",
@@ -371,8 +376,11 @@ func (b *builder) build(ctx context.Context, video string) error {
 			"format=nv12,hwupload",
 		"-c:v", "h264_vaapi", "-qp", "24",
 		"-c:a", "aac", "-b:a", "128k",
-		"-movflags", "+faststart", video)
-	return err
+		"-movflags", "+faststart", partial)
+	if err != nil {
+		return err
+	}
+	return os.Rename(partial, video)
 }
 
 // speak synthesizes every step of every scene in parallel (cached ones
@@ -384,6 +392,7 @@ func (b *builder) speak(ctx context.Context) error {
 	var errs []error
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	limit := make(chan struct{}, 6) // requests in flight
 
 	for i, s := range scenes {
 		parts := s.parts()
@@ -400,6 +409,9 @@ func (b *builder) speak(ctx context.Context) error {
 
 		for k, p := range parts {
 			wg.Go(func() {
+				limit <- struct{}{}
+				defer func() { <-limit }()
+
 				sp, err := speak(ctx, b.key, b.script.Voice, p.Say)
 				if err == nil {
 					durs[i][k], err = probeDuration(ctx, sp.Wav)
@@ -504,10 +516,11 @@ func (b *builder) clipScene(ctx context.Context, i int, s Scene,
 			i+1, speed, busyLen, length)
 	}
 
-	// Pass 2: fit to length exactly
+	// Pass 2: fit to length exactly, counted in frames (a duration
+	// rounded to milliseconds keeps a frame too many a third of the time)
 	vf := fmt.Sprintf("setpts=PTS/%s,tpad=stop_mode=clone:stop_duration=%s,"+
-		"trim=duration=%s,setpts=PTS-STARTPTS,fps=%d",
-		ftoa(speed), ftoa(length), ftoa(length), fps)
+		"fps=%d,trim=end_frame=%d,setpts=PTS-STARTPTS",
+		ftoa(speed), ftoa(length), fps, int(math.Round(length*fps)))
 
 	return ffmpeg(ctx, "", nil, append([]string{"-i", busy, "-vf", vf},
 		append(sceneCodec, out)...)...)
@@ -541,18 +554,22 @@ func stillScene(ctx context.Context, img string, length float64,
 		"-i", img, "-vf", vf}, append(sceneCodec, out)...)...)
 }
 
-// pagedY is a crop offset expression that shows an image of height
-// tall in equal-time pages, pageStep apart, the last one flush with
-// the bottom.
-func pagedY(tall int, length float64) string {
-	pages := 1 + (tall-frameH+pageStep-1)/pageStep
-	return fmt.Sprintf("min(floor(t/%s)*%d,ih-oh)",
-		ftoa(length/float64(pages)), pageStep)
+// pageCount is how many frames, pageStep apart, show an image of
+// height tall: the last one flush with the bottom.
+func pageCount(tall int) int {
+	return 1 + max(0, tall-frameH+pageStep-1)/pageStep
 }
 
-// codeScene draws scene i's code. Plain narration: one image, paged
-// if tall. Steps: one image per step, its focus lit, cut straight to a
-// view of it (or, with scroll "smooth", scrolled from the last one).
+// pagedY is a crop offset expression that shows an image of height
+// tall in equal-time pages (pageCount).
+func pagedY(tall int, length float64) string {
+	return fmt.Sprintf("min(floor(t/%s)*%d,ih-oh)",
+		ftoa(length/float64(pageCount(tall))), pageStep)
+}
+
+// codeScene draws scene i's code. Plain narration: one frame, pages
+// cut one after another if tall (or with scroll "smooth", one pan).
+// Steps: one view per step, its focus lit, cut to (or eased to) it.
 func (b *builder) codeScene(ctx context.Context, i int, s Scene,
 	out string) error {
 
@@ -560,23 +577,47 @@ func (b *builder) codeScene(ctx context.Context, i int, s Scene,
 	if err != nil {
 		return err
 	}
+	smooth := s.Code.Scroll == "smooth"
+	t := b.timings[i]
 
 	if s.Steps == nil {
 		r, err := drawListing(l, highlight{})
 		if err != nil {
 			return err
 		}
-		png := b.scenePath(i, "png")
-		if err := savePNG(r.Img, png); err != nil {
-			return err
+
+		tall := r.Img.Bounds().Dy()
+		if tall <= frameH || smooth {
+			if smooth && tall > maxPanH {
+				return fmt.Errorf("smooth scroll over %d px: keep it under "+
+					"%d (lines), or let it page", tall, maxPanH)
+			}
+			png := b.scenePath(i, "png")
+			if err := savePNG(r.Img, png); err != nil {
+				return err
+			}
+			return stillScene(ctx, png, t.Length, smooth, out)
 		}
-		return stillScene(ctx, png, b.timings[i].Length,
-			s.Code.Scroll == "smooth", out)
+
+		// Pages, each cut out here: ffmpeg only ever sees a frame
+		var segments []string
+		pages := pageCount(tall)
+		for k := range pages {
+			start := frames(t.Length * float64(k) / float64(pages))
+			end := frames(t.Length * float64(k+1) / float64(pages))
+			y := min(k*pageStep, tall-frameH)
+
+			seg, err := b.segment(ctx, i, k, r.Img, y, y, end-start)
+			if err != nil {
+				return err
+			}
+			segments = append(segments, seg)
+		}
+		return joinVideos(ctx, segments, out)
 	}
 
 	// ---- One segment per step ----
 
-	t := b.timings[i]
 	var segments []string
 	prevY := -1
 
@@ -596,23 +637,17 @@ func (b *builder) codeScene(ctx context.Context, i int, s Scene,
 			prevY = y
 		}
 
-		png := b.scenePath(i, fmt.Sprintf("step-%02d.png", k+1))
-		if err := savePNG(r.Img, png); err != nil {
-			return err
-		}
-
 		end := t.Length
 		if k+1 < len(t.Cuts) {
 			end = t.Cuts[k+1]
 		}
 
-		seg := b.scenePath(i, fmt.Sprintf("step-%02d.mp4", k+1))
 		from := y
-		if s.Code.Scroll == "smooth" {
+		if smooth {
 			from = prevY
 		}
-		if err := viewSegment(ctx, png, from, y, end-t.Cuts[k],
-			seg); err != nil {
+		seg, err := b.segment(ctx, i, k, r.Img, from, y, end-t.Cuts[k])
+		if err != nil {
 			return err
 		}
 
@@ -621,6 +656,24 @@ func (b *builder) codeScene(ctx context.Context, i int, s Scene,
 	}
 
 	return joinVideos(ctx, segments, out)
+}
+
+// segment shows img's frame-high window at y1, eased from y0, for
+// length seconds. Only the band it shows is written out: a tall PNG
+// costs ffmpeg gigabytes, decoded anew for every frame.
+func (b *builder) segment(ctx context.Context, i, k int, img *image.RGBA,
+	y0, y1 int, length float64) (string, error) {
+
+	top, bottom := min(y0, y1), max(y0, y1)+frameH
+	band := img.SubImage(image.Rect(0, top, frameW, bottom))
+
+	png := b.scenePath(i, fmt.Sprintf("seg-%02d.png", k+1))
+	if err := savePNG(band, png); err != nil {
+		return "", err
+	}
+
+	seg := b.scenePath(i, fmt.Sprintf("seg-%02d.mp4", k+1))
+	return seg, viewSegment(ctx, png, y0-top, y1-top, length, seg)
 }
 
 // viewSegment shows a frame-high window of img for length seconds,

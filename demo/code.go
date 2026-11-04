@@ -239,6 +239,9 @@ func parseDiff(text string) ([]*codeFile, error) {
 				oldN, newN, oldLeft, newLeft = oldN+1, newN+1, oldLeft-1, newLeft-1
 			case '-':
 				cl.Old, cl.Pos = oldN, newN
+				if newN == 0 {
+					cl.Pos = oldN // a deleted file has no new side
+				}
 				oldN, oldLeft = oldN+1, oldLeft-1
 				h.Dels++
 				file.Dels++
@@ -420,6 +423,10 @@ const (
 	gapH     = 14
 	tabWidth = 4
 	focusBar = 6
+
+	// maxListingH caps a drawing (~1000 lines): no scene shows more,
+	// and beyond it memory runs away
+	maxListingH = 30 * frameH
 )
 
 // metrics size the code text. Advances are whole pixels at these sizes
@@ -536,6 +543,10 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 	// ---- Measure, then draw ----
 
 	height := p.layout(nil)
+	if height > maxListingH {
+		return nil, fmt.Errorf("%d px tall, over %d: narrow it with "+
+			"lines or hunks", height, maxListingH)
+	}
 	p.img = image.NewRGBA(image.Rect(0, 0, frameW, max(height, frameH)))
 	draw.Draw(p.img, p.img.Bounds(), image.NewUniform(colBG),
 		image.Point{}, draw.Src)
@@ -547,8 +558,22 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 			return nil, fmt.Errorf("mark %q: not in the shown lines", mk)
 		}
 	}
+	if f := hl.Focus; f != nil && !anyIn(p.rows, f[0], f[1]) {
+		return nil, fmt.Errorf("focus %d-%d: no shown line there "+
+			"(demo code lists them)", f[0], f[1])
+	}
 
 	return &render{Img: p.img, rows: p.rows}, nil
+}
+
+// anyIn reports whether a drawn line sits in [from, to].
+func anyIn(rows map[int][2]int, from, to int) bool {
+	for pos := range rows {
+		if pos >= from && pos <= to {
+			return true
+		}
+	}
+	return false
 }
 
 // savePNG writes img to path.
@@ -723,7 +748,7 @@ func (p *painter) row(img *image.RGBA, y int, h *hunk, runs [][]run,
 
 		// Focus finds a row by the new side's position, else the old
 		if k == len(row)-1 || row[len(row)-1] < 0 {
-			p.rows[l.Pos] = [2]int{y, y + height}
+			p.rows[l.Pos] = mergeSpan(p.rows, l.Pos, y, y+height)
 		}
 	}
 
@@ -732,6 +757,15 @@ func (p *painter) row(img *image.RGBA, y int, h *hunk, runs [][]run,
 		fill(img, p.panes[1].x-1, y, 2, height, colBG)
 	}
 	return height
+}
+
+// mergeSpan widens pos's span to cover [top, bottom): a removed line
+// shares its position with the new line after it.
+func mergeSpan(rows map[int][2]int, pos, top, bottom int) [2]int {
+	if s, ok := rows[pos]; ok {
+		return [2]int{min(s[0], top), max(s[1], bottom)}
+	}
+	return [2]int{top, bottom}
 }
 
 // fileHeader draws a file's path, then its status and +/- counts in

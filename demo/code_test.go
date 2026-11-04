@@ -270,3 +270,55 @@ func TestSplitDraws(t *testing.T) {
 		t.Fatal("split on a plain file accepted")
 	}
 }
+
+func TestFocusMustMatch(t *testing.T) {
+	files, _ := parseDiff(sampleDiff)
+	l := &listing{Files: files[:1], Diff: true}
+	if _, err := drawListing(l, highlight{Focus: []int{500, 510}}); err == nil {
+		t.Fatal("focus past the end accepted")
+	}
+}
+
+// A replaced block's removed lines share the next new line's position:
+// its span must cover them, or a tall focus scrolls past them
+func TestRemovedLinesInSpan(t *testing.T) {
+	files, _ := parseDiff(sampleDiff)
+	r, err := drawListing(&listing{Files: files[:1], Diff: true},
+		highlight{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	span := r.rows[2] // "-var x = 1" and "+var x = 2"
+	if span[1]-span[0] != 2*unifiedMetrics.rowH {
+		t.Fatalf("span of position 2 = %v, want two rows", span)
+	}
+}
+
+func TestDeletedFilePositions(t *testing.T) {
+	files, err := parseDiff(`diff --git a/gone.txt b/gone.txt
+deleted file mode 100644
+--- a/gone.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-one
+-two
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := files[0].Hunks[0].Lines
+	if lines[0].Pos != 1 || lines[1].Pos != 2 {
+		t.Fatalf("positions %d, %d; want old numbers", lines[0].Pos, lines[1].Pos)
+	}
+}
+
+func TestListingHeightCap(t *testing.T) {
+	h := &hunk{Index: 1}
+	for i := 1; i <= 2000; i++ {
+		h.Lines = append(h.Lines, codeLine{Kind: ' ', Old: i, New: i, Pos: i})
+	}
+	l := &listing{Files: []*codeFile{{Path: "big.txt", Hunks: []*hunk{h}}}}
+	if _, err := drawListing(l, highlight{}); err == nil {
+		t.Fatal("2000 lines drawn")
+	}
+}
