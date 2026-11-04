@@ -55,6 +55,7 @@ Code is drawn, not filmed. Preview what a scene will show:
 ```sh
 demo code -lines 440-480 -focus 452-462 -mark 'r.resume()' desk/rec.go
 demo code -diff -- origin/master...HEAD -- desk/   # numbered hunks
+demo code -diff -split -hunks 3 -- origin/master...HEAD -- desk/run.go
 ```
 
 Speech: `demo say "a line"` plays it; voices and tempo in `demo say -h`.

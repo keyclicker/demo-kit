@@ -38,6 +38,7 @@ import (
 type listing struct {
 	Files []*codeFile
 	Diff  bool // +/- markers, hunk headers, stats
+	Split bool // a diff side by side: old left, new right
 }
 
 // codeFile is one file: of a diff, or a plain source excerpt (one
@@ -84,6 +85,9 @@ type CodeSpec struct {
 
 	// Scroll is how the view moves: "" cuts (default), "smooth" eases
 	Scroll string `json:"scroll,omitempty"`
+
+	// Split shows a diff side by side, old left and new right
+	Split bool `json:"split,omitempty"`
 }
 
 // check rejects specs with no source, two, or a bad range.
@@ -93,6 +97,8 @@ func (c CodeSpec) check() error {
 		return fmt.Errorf("code: needs exactly one of file, diff")
 	case c.File != "" && len(c.Hunks) > 0:
 		return fmt.Errorf("code: hunks need a diff")
+	case c.File != "" && c.Split:
+		return fmt.Errorf("code: split needs a diff")
 	case c.Scroll != "" && c.Scroll != "smooth":
 		return fmt.Errorf(`code: scroll %q: want "smooth" or nothing`,
 			c.Scroll)
@@ -184,7 +190,8 @@ func readDiff(ctx context.Context, c CodeSpec) (*listing, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &listing{Files: pickHunks(files, c.Hunks), Diff: true}, nil
+	return &listing{Files: pickHunks(files, c.Hunks), Diff: true,
+		Split: c.Split}, nil
 }
 
 // ---- Diff parsing ----
@@ -393,18 +400,29 @@ var (
 	monoBold []byte
 )
 
-// Layout, in pixels, for a 1280-wide frame: ~100 columns of 20 px mono
+// Layout, in pixels, for a 1280-wide frame
 const (
 	frameW, frameH = 1280, 960
 
 	margin   = 24
-	fontSize = 20
-	rowH     = 28
 	fileRowH = 52
 	hunkRowH = 38
 	gapH     = 14
 	tabWidth = 4
 	focusBar = 6
+)
+
+// metrics size the code text. Advances are whole pixels at these sizes
+// (JetBrains Mono is 0.6 em wide), so columns map to x exactly.
+type metrics struct {
+	fontSize float64
+	rowH     int
+	margin   int // inside each pane
+}
+
+var (
+	unifiedMetrics = metrics{fontSize: 20, rowH: 28, margin: margin}
+	splitMetrics   = metrics{fontSize: 15, rowH: 22, margin: 12}
 )
 
 // Dark palette, GitHub-like, to sit with chroma's github-dark
@@ -479,22 +497,31 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 			"the diff to a path, or pick hunks", len(l.Files))
 	}
 
-	regular, err := loadFace(monoRegular)
+	m := unifiedMetrics
+	if l.Split {
+		m = splitMetrics
+	}
+
+	regular, err := loadFace(monoRegular, m.fontSize)
 	if err != nil {
 		return nil, err
 	}
-	bold, err := loadFace(monoBold)
+	bold, err := loadFace(monoBold, m.fontSize)
 	if err != nil {
 		return nil, err
 	}
 
 	p := &painter{listing: l, face: regular, bold: bold, hl: hl,
-		marked: map[string]bool{}}
+		rowH: m.rowH, marked: map[string]bool{}}
 	p.adv = font.MeasureString(regular, "M").Round()
 
-	// Gutter: 5-digit line number, space, +/- marker, space
-	p.codeX = margin + 8*p.adv
-	p.cols = (frameW - p.codeX - margin) / p.adv
+	if l.Split {
+		half := frameW / 2
+		p.panes = []pane{p.newPane(0, half, m.margin, true),
+			p.newPane(half, half, m.margin, false)}
+	} else {
+		p.panes = []pane{p.newPane(0, frameW, m.margin, false)}
+	}
 
 	// ---- Measure, then draw ----
 
@@ -505,9 +532,9 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 	p.rows = map[int][2]int{}
 	p.layout(p.img)
 
-	for _, m := range hl.Marks {
-		if !p.marked[m] {
-			return nil, fmt.Errorf("mark %q: not in the shown lines", m)
+	for _, mk := range hl.Marks {
+		if !p.marked[mk] {
+			return nil, fmt.Errorf("mark %q: not in the shown lines", mk)
 		}
 	}
 
@@ -529,13 +556,29 @@ func savePNG(img image.Image, path string) error {
 	return w.Flush()
 }
 
-func loadFace(ttf []byte) (font.Face, error) {
+func loadFace(ttf []byte, size float64) (font.Face, error) {
 	parsed, err := opentype.Parse(ttf)
 	if err != nil {
 		return nil, err
 	}
 	return opentype.NewFace(parsed, &opentype.FaceOptions{
-		Size: fontSize, DPI: 72, Hinting: font.HintingFull})
+		Size: size, DPI: 72, Hinting: font.HintingFull})
+}
+
+// pane is a column of code: the whole frame, or one side of a split.
+type pane struct {
+	x, w   int  // left edge and width
+	margin int  // before the gutter, and after the code
+	codeX  int  // where code starts
+	cols   int  // code columns before wrapping
+	old    bool // numbers context lines by the old file (a split's left)
+}
+
+// newPane lays out a pane: margin, 5-digit line number, marker, code.
+func (p *painter) newPane(x, w, margin int, old bool) pane {
+	codeX := x + margin + 8*p.adv
+	return pane{x: x, w: w, margin: margin, codeX: codeX,
+		cols: (x + w - codeX - margin) / p.adv, old: old}
 }
 
 // painter lays rows out top to bottom; with a nil image it only
@@ -547,8 +590,8 @@ type painter struct {
 	marked     map[string]bool // marks found, for drawListing's check
 
 	adv   int // one column, px
-	codeX int // where code starts
-	cols  int // code columns before wrapping
+	rowH  int
+	panes []pane
 
 	img  *image.RGBA
 	rows map[int][2]int
@@ -560,20 +603,16 @@ func (p *painter) layout(img *image.RGBA) int {
 	y := margin
 
 	for _, f := range p.listing.Files {
-		// ---- File header ----
-
 		if img != nil {
-			fill(img, 0, y, frameW, fileRowH, colFileBG)
-			x := p.text(img, p.bold, margin, y, fileRowH, f.Path, colText)
-			p.text(img, p.face, x, y, fileRowH, "  "+p.fileNote(f), colDim)
+			p.fileHeader(img, y, f)
 		}
 		y += fileRowH
 
 		if f.Binary {
 			if img != nil {
-				p.text(img, p.face, margin, y, rowH, "binary file", colDim)
+				p.text(img, p.face, margin, y, p.rowH, "binary file", colDim)
 			}
-			y += rowH + gapH
+			y += p.rowH + gapH
 			continue
 		}
 
@@ -588,15 +627,8 @@ func (p *painter) layout(img *image.RGBA) int {
 			}
 
 			runs := highlightHunk(lexer, h)
-			for li, l := range h.Lines {
-				rows := wrapTokens(runs[li], p.cols)
-				height := rowH * len(rows)
-
-				if img != nil {
-					p.codeLine(img, y, l, rows)
-					p.rows[l.Pos] = [2]int{y, y + height}
-				}
-				y += height
+			for _, row := range p.rowsOf(h) {
+				y += p.row(img, y, h, runs, row)
 			}
 		}
 
@@ -606,19 +638,108 @@ func (p *painter) layout(img *image.RGBA) int {
 	return y + margin
 }
 
-// fileNote is the dim text after a file's path: diff stats, or the
-// shown line range.
-func (p *painter) fileNote(f *codeFile) string {
-	if !p.listing.Diff {
-		lines := f.Hunks[0].Lines
-		return fmt.Sprintf("lines %d-%d", lines[0].Pos, lines[len(lines)-1].Pos)
+// rowsOf lists what each row shows, as indexes into h.Lines per pane
+// (-1: empty). Unified: one line per row. Split: context on both
+// sides; a run of removals beside the run of additions after it.
+func (p *painter) rowsOf(h *hunk) [][]int {
+	var rows [][]int
+
+	if len(p.panes) == 1 {
+		for i := range h.Lines {
+			rows = append(rows, []int{i})
+		}
+		return rows
 	}
 
-	note := fmt.Sprintf("+%d -%d", f.Adds, f.Dels)
-	if f.Status != "" {
-		note = f.Status + "  " + note
+	for i := 0; i < len(h.Lines); {
+		if h.Lines[i].Kind == ' ' {
+			rows = append(rows, []int{i, i})
+			i++
+			continue
+		}
+
+		var dels, adds []int
+		for ; i < len(h.Lines) && h.Lines[i].Kind == '-'; i++ {
+			dels = append(dels, i)
+		}
+		for ; i < len(h.Lines) && h.Lines[i].Kind == '+'; i++ {
+			adds = append(adds, i)
+		}
+
+		for k := range max(len(dels), len(adds)) {
+			row := []int{-1, -1}
+			if k < len(dels) {
+				row[0] = dels[k]
+			}
+			if k < len(adds) {
+				row[1] = adds[k]
+			}
+			rows = append(rows, row)
+		}
 	}
-	return note
+	return rows
+}
+
+// row draws one row of panes at y (measures only, with a nil image)
+// and returns its height: the tallest of its wrapped lines.
+func (p *painter) row(img *image.RGBA, y int, h *hunk, runs [][]run,
+	row []int) int {
+
+	wrapped := make([][][]run, len(row))
+	height := p.rowH
+	for k, li := range row {
+		if li >= 0 {
+			wrapped[k] = wrapTokens(runs[li], p.panes[k].cols)
+			height = max(height, p.rowH*len(wrapped[k]))
+		}
+	}
+
+	if img == nil {
+		return height
+	}
+
+	for k, li := range row {
+		pn := p.panes[k]
+		if li < 0 {
+			fill(img, pn.x, y, pn.w, height, colFileBG)
+			continue
+		}
+
+		l := h.Lines[li]
+		p.codeLine(img, pn, y, height, l, wrapped[k])
+
+		// Focus finds a row by the new side's position, else the old
+		if k == len(row)-1 || row[len(row)-1] < 0 {
+			p.rows[l.Pos] = [2]int{y, y + height}
+		}
+	}
+
+	// The split's seam
+	if len(row) == 2 {
+		fill(img, p.panes[1].x-1, y, 2, height, colBG)
+	}
+	return height
+}
+
+// fileHeader draws a file's path, then its status and +/- counts in
+// their colors, or the shown line range.
+func (p *painter) fileHeader(img *image.RGBA, y int, f *codeFile) {
+	fill(img, 0, y, frameW, fileRowH, colFileBG)
+	x := p.text(img, p.bold, margin, y, fileRowH, f.Path, colText)
+
+	if !p.listing.Diff {
+		lines := f.Hunks[0].Lines
+		p.text(img, p.face, x, y, fileRowH, fmt.Sprintf("  lines %d-%d",
+			lines[0].Pos, lines[len(lines)-1].Pos), colDim)
+		return
+	}
+
+	if f.Status != "" {
+		x = p.text(img, p.face, x, y, fileRowH, "  "+f.Status, colDim)
+	}
+	x = p.text(img, p.face, x, y, fileRowH, fmt.Sprintf("  +%d", f.Adds),
+		colAdd)
+	p.text(img, p.face, x, y, fileRowH, fmt.Sprintf(" -%d", f.Dels), colDel)
 }
 
 // hunkHeader draws a diff hunk's numbered header row.
@@ -633,37 +754,41 @@ func (p *painter) hunkHeader(img *image.RGBA, y int, h *hunk) {
 		clip(label, (frameW-2*margin)/p.adv), colHunkText)
 }
 
-// codeLine draws one line: tinted background, gutter, marks, code
-// rows, and focus (a bar on it, or a fade over it).
-func (p *painter) codeLine(img *image.RGBA, y int, l codeLine,
+// codeLine draws one line in a pane, in a row of height h: tinted
+// background, gutter, marks, code rows, and focus (a bar on it, or a
+// fade over it).
+func (p *painter) codeLine(img *image.RGBA, pn pane, y, h int, l codeLine,
 	rows [][]run) {
 
 	focus := p.hl.Focus
 	inFocus := focus == nil || (l.Pos >= focus[0] && l.Pos <= focus[1])
 
-	h := rowH * len(rows)
 	num, mark, markCol := l.New, " ", colDim
+	if pn.old {
+		num = l.Old
+	}
 
 	switch l.Kind {
 	case '+':
-		fill(img, 0, y, frameW, h, colAddBG)
+		fill(img, pn.x, y, pn.w, h, colAddBG)
 		mark, markCol = "+", colAdd
 	case '-':
-		fill(img, 0, y, frameW, h, colDelBG)
+		fill(img, pn.x, y, pn.w, h, colDelBG)
 		num, mark, markCol = l.Old, "-", colDel
 	}
 
-	p.text(img, p.face, margin, y, rowH, fmt.Sprintf("%5d", num), colDim)
-	p.text(img, p.face, margin+6*p.adv, y, rowH, mark, markCol)
+	gx := pn.x + pn.margin
+	p.text(img, p.face, gx, y, p.rowH, fmt.Sprintf("%5d", num), colDim)
+	p.text(img, p.face, gx+6*p.adv, y, p.rowH, mark, markCol)
 
 	if inFocus {
-		p.marks(img, y, l.Text)
+		p.marks(img, pn, y, l.Text)
 	}
 
 	for i, row := range rows {
-		x := p.codeX
+		x := pn.codeX
 		for _, t := range row {
-			x = p.text(img, p.face, x, y+i*rowH, rowH, t.text, t.col)
+			x = p.text(img, p.face, x, y+i*p.rowH, p.rowH, t.text, t.col)
 		}
 	}
 
@@ -672,9 +797,9 @@ func (p *painter) codeLine(img *image.RGBA, y int, l codeLine,
 	switch {
 	case focus == nil:
 	case inFocus:
-		fill(img, 0, y, focusBar, h, colFocus)
+		fill(img, pn.x, y, focusBar, h, colFocus)
 	default:
-		draw.Draw(img, image.Rect(0, y, frameW, y+h),
+		draw.Draw(img, image.Rect(pn.x, y, pn.x+pn.w, y+h),
 			image.NewUniform(colFade), image.Point{}, draw.Over)
 	}
 }
@@ -682,7 +807,7 @@ func (p *painter) codeLine(img *image.RGBA, y int, l codeLine,
 // marks boxes every occurrence of the highlight's marks in a line's
 // text, cell by cell across wrapped rows. Drawn before the text, so
 // the text stays on top.
-func (p *painter) marks(img *image.RGBA, y int, text string) {
+func (p *painter) marks(img *image.RGBA, pn pane, y int, text string) {
 	text = strings.ReplaceAll(text, "\t", strings.Repeat(" ", tabWidth))
 
 	for _, m := range p.hl.Marks {
@@ -694,25 +819,25 @@ func (p *painter) marks(img *image.RGBA, y int, text string) {
 			p.marked[m] = true
 
 			start := utf8.RuneCountInString(text[:at+i])
-			p.markCells(img, y, start, start+utf8.RuneCountInString(m))
+			p.markCells(img, pn, y, start, start+utf8.RuneCountInString(m))
 			at += i + len(m)
 		}
 	}
 }
 
 // markCells boxes columns [from, to) of a line starting at y.
-func (p *painter) markCells(img *image.RGBA, y, from, to int) {
+func (p *painter) markCells(img *image.RGBA, pn pane, y, from, to int) {
 	for col := from; col < to; {
-		row, c := col/p.cols, col%p.cols
-		n := min(to-col, p.cols-c)
+		row, c := col/pn.cols, col%pn.cols
+		n := min(to-col, pn.cols-c)
 
-		x0 := p.codeX + c*p.adv - 2
-		x1 := p.codeX + (c+n)*p.adv + 2
-		top := y + row*rowH + 2
+		x0 := pn.codeX + c*p.adv - 2
+		x1 := pn.codeX + (c+n)*p.adv + 2
+		top := y + row*p.rowH + 2
 
-		draw.Draw(img, image.Rect(x0, top, x1, top+rowH-4),
+		draw.Draw(img, image.Rect(x0, top, x1, top+p.rowH-4),
 			image.NewUniform(colMark), image.Point{}, draw.Over)
-		fill(img, x0, top+rowH-6, x1-x0, 2, colFocus)
+		fill(img, x0, top+p.rowH-6, x1-x0, 2, colFocus)
 
 		col += n
 	}
@@ -866,6 +991,7 @@ func wrapTokens(runs []run, cols int) [][]run {
 func cmdCode(args []string) error {
 	fs := flag.NewFlagSet("code", flag.ExitOnError)
 	diff := fs.Bool("diff", false, "args are git diff args, not a file")
+	split := fs.Bool("split", false, "a diff side by side: old left, new right")
 	out := fs.String("o", "", "PNG to write (default ~/tmp/demo/code-<time>.png)")
 	unified := fs.Int("U", 3, "diff context lines")
 	picks := fs.String("hunks", "", "diff hunks to keep, e.g. 1,3 (default all)")
@@ -883,7 +1009,7 @@ func cmdCode(args []string) error {
 	}
 	fs.Parse(args)
 
-	spec := CodeSpec{Context: *unified}
+	spec := CodeSpec{Context: *unified, Split: *split}
 	if *diff {
 		spec.Diff = fs.Args()
 		if spec.Diff == nil {

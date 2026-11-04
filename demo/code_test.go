@@ -236,3 +236,37 @@ func TestMarks(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitRows(t *testing.T) {
+	files, _ := parseDiff(sampleDiff)
+	h := files[0].Hunks[0] // ' ', '-', '+', '+', ' '
+
+	p := &painter{panes: make([]pane, 2)}
+	got := p.rowsOf(h)
+	want := [][]int{{0, 0}, {1, 2}, {-1, 3}, {4, 4}}
+	if len(got) != len(want) {
+		t.Fatalf("rows %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i][0] != want[i][0] || got[i][1] != want[i][1] {
+			t.Fatalf("rows %v, want %v", got, want)
+		}
+	}
+}
+
+func TestSplitDraws(t *testing.T) {
+	files, _ := parseDiff(sampleDiff)
+	l := &listing{Files: files[:1], Diff: true, Split: true}
+	r, err := drawListing(l, highlight{Focus: []int{2, 3},
+		Marks: []string{"x = 2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Img.Bounds().Dx() != frameW {
+		t.Fatalf("width %d", r.Img.Bounds().Dx())
+	}
+
+	if (CodeSpec{File: "a", Split: true}).check() == nil {
+		t.Fatal("split on a plain file accepted")
+	}
+}

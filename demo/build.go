@@ -158,6 +158,7 @@ script.json: one object
     image  path    a still; taller than 4:3 pages through
     code   object  file: path, or diff: [git diff args]; then
                    hunks: [n, ...], lines: [from, to],
+                   split: true for a diff side by side,
                    scroll: "smooth" to ease between views
   and narration:
     say      string  spoken over the scene; it sets the scene's length
