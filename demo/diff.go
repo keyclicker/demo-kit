@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	_ "embed"
 	"flag"
 	"fmt"
 	"image"
@@ -21,8 +22,6 @@ import (
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/gofont/gomono"
-	"golang.org/x/image/font/gofont/gomonobold"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
 )
@@ -281,6 +280,16 @@ func gitDiff(ctx context.Context, unified int, args []string) (string, error) {
 
 // ---- Rendering ----
 
+// JetBrains Mono 2.304 (OFL, fonts/OFL.txt), embedded: no font to
+// install, same look on every machine
+var (
+	//go:embed fonts/JetBrainsMono-Regular.ttf
+	monoRegular []byte
+
+	//go:embed fonts/JetBrainsMono-Bold.ttf
+	monoBold []byte
+)
+
 // Layout, in pixels, for a 1280-wide frame: ~100 columns of 20 px mono
 const (
 	frameW, frameH = 1280, 960
@@ -315,11 +324,11 @@ func rgb(hex uint32) color.RGBA {
 // renderDiff draws files as one PNG, 1280 wide and at least 960 tall:
 // a header per file, a numbered header per hunk, then the lines.
 func renderDiff(files []*diffFile, out string) error {
-	regular, err := loadFace(gomono.TTF)
+	regular, err := loadFace(monoRegular)
 	if err != nil {
 		return err
 	}
-	bold, err := loadFace(gomonobold.TTF)
+	bold, err := loadFace(monoBold)
 	if err != nil {
 		return err
 	}
