@@ -622,7 +622,32 @@ func (b *builder) speak(ctx context.Context) error {
 		}
 		at += t.Length
 	}
+
+	if share := slideShare(scenes, b.timings); share > maxSlideShare {
+		fmt.Fprintf(os.Stderr, "demo: slides fill %.0f%% of the video: "+
+			"while talking, show the real thing (the app, a terminal, "+
+			"the code); slides are accents\n", 100*share)
+	}
 	return nil
+}
+
+// maxSlideShare is how much of a video slides may fill before build
+// warns: past it, it's a slideshow read aloud, not a demo.
+const maxSlideShare = 0.4
+
+// slideShare is the part of scenes' length that slides fill.
+func slideShare(scenes []Scene, timings []timing) float64 {
+	var slides, total float64
+	for i, s := range scenes {
+		if s.Slide != nil {
+			slides += timings[i].Length
+		}
+		total += timings[i].Length
+	}
+	if total == 0 {
+		return 0
+	}
+	return slides / total
 }
 
 // scenePath names a scene's intermediate file in the work dir.
@@ -761,12 +786,19 @@ func (b *builder) clipScene(ctx context.Context, i int, s Scene, t timing,
 		return err
 	}
 
-	var cut []string
-	if s.From > 0 {
-		cut = append(cut, "-ss", ftoa(s.From))
+	from, to := s.From, s.To
+	if s.Audio {
+		if from, to, err = quietCuts(ctx, s); err != nil {
+			return err
+		}
 	}
-	if s.To > 0 {
-		cut = append(cut, "-to", ftoa(s.To))
+
+	var cut []string
+	if from > 0 {
+		cut = append(cut, "-ss", ftoa(from))
+	}
+	if to > 0 {
+		cut = append(cut, "-to", ftoa(to))
 	}
 
 	// Pass 1: only frames where something changed, back to back

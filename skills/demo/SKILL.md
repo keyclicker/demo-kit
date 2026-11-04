@@ -10,6 +10,13 @@ point at the code. Be creative: pick the shots, order, pace and tone
 that fit the subject. Nothing here is a template, except where files
 go.
 
+Show the real thing while you talk: the app, a terminal, the code, a
+diff. A slide is an accent (a hook, one callout, the end card), never
+the narration typed out: a video that's mostly slides is a slideshow
+read aloud. `demo build` warns when slides fill over 40% of it. Match
+the ask, too: "I don't want to read code" means the app and its
+output, with code at most a glance.
+
 ## Replies
 
 The reply that delivers a demo is the video and a short list, all
@@ -96,9 +103,7 @@ captions) and `--scene 3` preview into `~/tmp/demo`.
 
 ```json
 {"title": "desk rec", "scenes": [
-  {"chapter": "Why", "slide": {"title": "desk rec", "text": "..."},
-   "say": "..."},
-  {"image": "artifacts/before.png", "steps": [
+  {"chapter": "Why", "image": "artifacts/before.png", "steps": [
     {"say": "..."}, {"say": "...", "box": [880, 140, 300, 60]},
     {"say": "...", "arrow": [1030, 400]}]},
   {"clip": "artifacts/pause.mp4", "from": 3, "to": 20, "steps": [
@@ -120,7 +125,9 @@ Every field, one line each: `demo build -h`. Narration sets each
 scene's length; steps point at the picture as they're said (a code
 focus, an image's box or arrow, a clip's zoom, a terminal's next
 command). Recordings lose idle frames and speed up to fit. Mistakes
-fail with a reason.
+fail with a reason. Cut clips with `from`/`to`, not by hand: with
+`audio: true` the cuts move into pauses, so speech never stops
+mid-word.
 
 Lists, notes and anything longer than a slide: write markdown into
 `artifacts/` and show it as `code`, a step per point with its focus.
