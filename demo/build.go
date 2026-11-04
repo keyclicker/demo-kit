@@ -147,6 +147,28 @@ func (s Scene) parts() []Step {
 	return nil
 }
 
+// scriptHelp is the script format, one line per field: the reference
+// agents read (the demo skill points here).
+const scriptHelp = `
+script.json: one object
+  title    string  the video's title (and its first chapter's name)
+  voice    object  voice, tempo, model, instructions; defaults are tuned
+  scenes   array   played in order, each with one picture:
+    clip   path    a recording; from, to: seconds to keep
+    image  path    a still; taller than 4:3 pages through
+    code   object  file: path, or diff: [git diff args]; then
+                   hunks: [n, ...], lines: [from, to],
+                   scroll: "smooth" to ease between views
+  and narration:
+    say      string  spoken over the scene; it sets the scene's length
+    steps    array   code only: [{say, focus: [from, to], marks: [text]}]
+    secs     number  minimum length; needed when nothing is said
+    chapter  string  starts a chapter here
+
+Clips and images resolve against the script; code against the current
+directory. Recordings lose idle frames and speed up to fit.
+`
+
 // ---- Timing ----
 
 const (
@@ -226,6 +248,7 @@ func cmdBuild(args []string) error {
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: demo build [flags] script.json\n")
 		fs.PrintDefaults()
+		fmt.Fprint(fs.Output(), scriptHelp)
 	}
 	fs.Parse(args)
 

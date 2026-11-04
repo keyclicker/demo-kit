@@ -10,10 +10,12 @@ point at the code. Be creative: pick the shots, order, pace and tone
 that fit the subject. Nothing here is a template, except where files
 go.
 
-## While this skill is active
+## Replies
 
-Chat gets almost nothing: the video, its URL, a line at most.
-Everything else goes in the video. Never post demos on GitHub.
+The reply that delivers a demo is the video, its URL, a line at most:
+everything else is in the video. After that, chat as usual, in text,
+unless the user asks for demos-only for the whole chat. Never post
+demos on GitHub.
 
 ## Where files go
 
@@ -40,11 +42,12 @@ desk rec start -o $W/artifacts/pause.mp4 $D   # act; pause/resume skip dead time
 desk rec stop $D
 ```
 
-A terminal: Ghostty, own instance, plain title bar, no tmux:
+A terminal: the user's Ghostty and zsh, as its own instance with a
+plain title bar and no tmux:
 
 ```sh
-DISPLAY=$D setsid -f ghostty --config-default-files=false \
-  --config-file=$HOME/projects/demo-kit/skills/demo/ghostty.conf -e bash
+DISPLAY=$D setsid -f ghostty \
+  --config-file=$HOME/projects/demo-kit/skills/demo/ghostty.conf
 ```
 
 Code is drawn, not filmed. Preview what a scene will show:
@@ -72,9 +75,9 @@ Edit it all: `demo build $W/demo.json` (speech cached, rebuild freely).
 ]}
 ```
 
-Narration sets each scene's length; recordings lose idle frames and
-speed up to fit. Artifact paths resolve against the script, code
-paths against the current directory. Mistakes fail with a reason.
+Every field, one line each: `demo build -h`. Narration sets each
+scene's length; recordings lose idle frames and speed up to fit.
+Mistakes fail with a reason.
 
 Look at a frame per scene before sending:
 `ffmpeg -ss T -i $W/demo.mp4 -frames:v 1 /tmp/f.png`.
