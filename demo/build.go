@@ -57,13 +57,14 @@ type Scene struct {
 }
 
 // Step is one beat of narration. On code, Focus lines [from, to]
-// light up and Marks box text inside them; on an image, Box [x, y, w,
-// h] (image pixels) is spotlit.
+// light up and Marks box text inside them; on an image (in its
+// pixels), Box [x, y, w, h] is spotlit and Arrow [x, y] pointed at.
 type Step struct {
 	Say   string   `json:"say"`
 	Focus []int    `json:"focus,omitempty"`
 	Marks []string `json:"marks,omitempty"`
 	Box   []int    `json:"box,omitempty"`
+	Arrow []int    `json:"arrow,omitempty"`
 }
 
 // loadScript reads a script, resolving clips and images against its
@@ -168,13 +169,16 @@ func (s Scene) checkStep(st Step) error {
 		return errors.New("needs say")
 	case (st.Focus != nil || st.Marks != nil) && s.Code == nil:
 		return errors.New("focus and marks need a code scene")
-	case st.Box != nil && s.Image == "":
-		return errors.New("box needs an image scene")
+	case (st.Box != nil || st.Arrow != nil) && s.Image == "":
+		return errors.New("box and arrow need an image scene")
 	case slices.Contains(st.Marks, ""):
 		return errors.New("empty mark")
 	case st.Box != nil && (len(st.Box) != 4 || st.Box[0] < 0 ||
 		st.Box[1] < 0 || st.Box[2] < 1 || st.Box[3] < 1):
 		return errors.New("box: want [x, y, w, h] in image pixels")
+	case st.Arrow != nil && (len(st.Arrow) != 2 || st.Arrow[0] < 0 ||
+		st.Arrow[1] < 0):
+		return errors.New("arrow: want [x, y] in image pixels")
 	}
 	return checkRange("focus", st.Focus)
 }
@@ -225,8 +229,9 @@ script.json: one object
     say      string  spoken over the scene; it sets the scene's length
     steps    array   [{say, ...}]: lines spoken in turn, each pointing:
                      code: focus: [from, to] lights lines, marks: [text]
-                     boxes text in them; image: box: [x, y, w, h] in its
-                     pixels spotlights it; term: one step per command
+                     boxes text in them; image (in its pixels): box:
+                     [x, y, w, h] spotlights a region, arrow: [x, y]
+                     points at a spot; term: one step per command
     voice    object  this scene's voice, over the script's
     secs     number  minimum length; needed when nothing is said
     chapter  string  starts a chapter here
@@ -707,8 +712,8 @@ func codeShots(ctx context.Context, s Scene, n int, cuts []int) (shots,
 }
 
 // imageShots shows an image: fitted to the frame, or to its width and
-// paged if taller. Steps with a box spotlight it, the view on it;
-// steps without show the image plain.
+// paged if taller. Steps with a box or an arrow point there, the view
+// on it; steps without show the image plain.
 func imageShots(s Scene, n int, cuts []int) (shots, error) {
 	p, err := loadPicture(s.Image)
 	if err != nil {
@@ -720,8 +725,8 @@ func imageShots(s Scene, n int, cuts []int) (shots, error) {
 	}
 
 	return stepShots(cuts, n, false, func(k int) (stepView, error) {
-		if box := s.Steps[k].Box; box != nil {
-			return p.spotlight(box)
+		if st := s.Steps[k]; st.Box != nil || st.Arrow != nil {
+			return p.point(st)
 		}
 		return stepView{p.canvas, -1}, nil
 	}), nil

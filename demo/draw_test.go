@@ -93,11 +93,11 @@ func TestSpotlight(t *testing.T) {
 		scale: 2}
 	fill(p.canvas, 0, 0, frameW, frameH, colText)
 
-	v, err := p.spotlight([]int{10, 10, 100, 50})
+	v, err := p.point(Step{Box: []int{10, 10, 100, 50}})
 	if err != nil || v.img == p.canvas || v.y != 0 {
 		t.Fatalf("spotlight: %v %v", v.y, err)
 	}
-	if _, err := p.spotlight([]int{600, 0, 100, 50}); err == nil {
+	if _, err := p.point(Step{Box: []int{600, 0, 100, 50}}); err == nil {
 		t.Fatal("box outside the image: accepted")
 	}
 
@@ -107,6 +107,29 @@ func TestSpotlight(t *testing.T) {
 	}
 	if c := v.img.RGBAAt(100, 50); c != colText {
 		t.Fatalf("inside changed: %v", c)
+	}
+
+	// A box at the edge keeps its whole outline, inside the picture
+	v, _ = p.point(Step{Box: []int{0, 0, 100, 50}})
+	if c := v.img.RGBAAt(0, 40); c != colFocus {
+		t.Fatalf("left outline at the edge: %v", c)
+	}
+
+	// An arrow: its tip just off the spot, no fade
+	v, err = p.point(Step{Arrow: []int{320, 240}})
+	if err != nil || v.img.RGBAAt(640+12, 480+12) != colFocus ||
+		v.img.RGBAAt(640, 480) != colText {
+		t.Fatalf("arrow: %v %v", v.img.RGBAAt(652, 492), err)
+	}
+	if c := v.img.RGBAAt(100, 900); c != colText {
+		t.Fatalf("arrow faded: %v", c)
+	}
+	// At a corner it clips, never writes past the picture
+	if _, err := p.point(Step{Arrow: []int{640, 480}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.point(Step{Arrow: []int{700, 10}}); err == nil {
+		t.Fatal("arrow outside the image: accepted")
 	}
 }
 

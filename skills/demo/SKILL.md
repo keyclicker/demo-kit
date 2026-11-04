@@ -91,7 +91,8 @@ captions) and `--scene 3` preview into `~/tmp/demo`.
   {"chapter": "Why", "slide": {"title": "desk rec", "text": "..."},
    "say": "..."},
   {"image": "artifacts/before.png", "steps": [
-    {"say": "..."}, {"say": "...", "box": [880, 140, 300, 60]}]},
+    {"say": "..."}, {"say": "...", "box": [880, 140, 300, 60]},
+    {"say": "...", "arrow": [1030, 400]}]},
   {"clip": "artifacts/pause.mp4", "from": 3, "to": 20, "say": "..."},
   {"term": {"run": ["desk new --no-rec", "desk ls"]}, "steps": [
     {"say": "..."}, {"say": "..."}]},
@@ -108,8 +109,9 @@ captions) and `--scene 3` preview into `~/tmp/demo`.
 
 Every field, one line each: `demo build -h`. Narration sets each
 scene's length; steps point at the picture as they're said (a code
-focus, an image's box, a terminal's next command). Recordings lose
-idle frames and speed up to fit. Mistakes fail with a reason.
+focus, an image's box or arrow, a terminal's next command).
+Recordings lose idle frames and speed up to fit. Mistakes fail with a
+reason.
 
 Lists, notes and anything longer than a slide: write markdown into
 `artifacts/` and show it as `code`, a step per point with its focus.
