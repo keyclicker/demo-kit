@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -49,10 +50,12 @@ type Scene struct {
 	Secs float64 `json:"secs,omitempty"`
 }
 
-// Step is one beat of a code scene's narration.
+// Step is one beat of a code scene's narration: Focus lines [from,
+// to] light up, Marks box text inside them.
 type Step struct {
-	Say   string `json:"say"`
-	Focus []int  `json:"focus,omitempty"` // lines [from, to] to light up
+	Say   string   `json:"say"`
+	Focus []int    `json:"focus,omitempty"`
+	Marks []string `json:"marks,omitempty"`
 }
 
 // loadScript reads a script, resolving clips and images against its
@@ -123,6 +126,9 @@ func (s Scene) check() error {
 			st.Focus); err != nil {
 			return err
 		}
+		if slices.Contains(st.Marks, "") {
+			return fmt.Errorf("step %d: empty mark", i+1)
+		}
 	}
 
 	if s.Code != nil {
@@ -153,7 +159,8 @@ const (
 	stepGap = 0.25 // between steps
 	tailOut = 0.4  // after it
 
-	scrollSecs = 0.35 // a focus change scrolls this long
+	scrollSecs = 0.35 // a smooth focus change scrolls this long
+	pageStep   = 864  // px a tall still advances per page: 3 lines kept
 
 	// maxSpeed warns past it: a clip that needs more is too long for
 	// its narration (cut From/To, or say more)
@@ -441,7 +448,7 @@ func (b *builder) sceneVideo(ctx context.Context, i int) error {
 	case s.Clip != "":
 		return b.clipScene(ctx, i, s, length, out)
 	case s.Image != "":
-		return stillScene(ctx, s.Image, length, out)
+		return stillScene(ctx, s.Image, length, false, out)
 	default:
 		return b.codeScene(ctx, i, s, out)
 	}
@@ -491,9 +498,10 @@ func (b *builder) clipScene(ctx context.Context, i int, s Scene,
 }
 
 // stillScene shows an image for length seconds. One taller than the
-// frame scrolls top to bottom, with a short hold at each end.
+// frame (after fitting its width) jumps page by page, or with smooth
+// scrolls top to bottom, holding a second at each end.
 func stillScene(ctx context.Context, img string, length float64,
-	out string) error {
+	smooth bool, out string) error {
 
 	w, h, err := imageSize(img)
 	if err != nil {
@@ -501,12 +509,15 @@ func stillScene(ctx context.Context, img string, length float64,
 	}
 
 	vf := fitFilter
-	if h*frameW > w*frameH {
-		hold := min(1.0, length/4)
-		vf = fmt.Sprintf("scale=%d:-2,crop=%d:%d:0:"+
-			"'(ih-oh)*clip((t-%s)/%s,0,1)',%s",
-			frameW, frameW, frameH, ftoa(hold), ftoa(length-2*hold),
-			fitFilter)
+	if tall := h * frameW / w; tall > frameH {
+		y := pagedY(tall, length)
+		if smooth {
+			hold := min(1.0, length/4)
+			y = fmt.Sprintf("(ih-oh)*clip((t-%s)/%s,0,1)", ftoa(hold),
+				ftoa(length-2*hold))
+		}
+		vf = fmt.Sprintf("scale=%d:-2,crop=%d:%d:0:'%s',%s",
+			frameW, frameW, frameH, y, fitFilter)
 	}
 
 	return ffmpeg(ctx, "", nil, append([]string{
@@ -514,9 +525,18 @@ func stillScene(ctx context.Context, img string, length float64,
 		"-i", img, "-vf", vf}, append(sceneCodec, out)...)...)
 }
 
-// codeScene draws scene i's code. Plain narration: one image, scrolled
-// if tall. Steps: one image per step, its focus lit, each scrolling
-// from the last step's view to its own.
+// pagedY is a crop offset expression that shows an image of height
+// tall in equal-time pages, pageStep apart, the last one flush with
+// the bottom.
+func pagedY(tall int, length float64) string {
+	pages := 1 + (tall-frameH+pageStep-1)/pageStep
+	return fmt.Sprintf("min(floor(t/%s)*%d,ih-oh)",
+		ftoa(length/float64(pages)), pageStep)
+}
+
+// codeScene draws scene i's code. Plain narration: one image, paged
+// if tall. Steps: one image per step, its focus lit, cut straight to a
+// view of it (or, with scroll "smooth", scrolled from the last one).
 func (b *builder) codeScene(ctx context.Context, i int, s Scene,
 	out string) error {
 
@@ -526,7 +546,7 @@ func (b *builder) codeScene(ctx context.Context, i int, s Scene,
 	}
 
 	if s.Steps == nil {
-		r, err := drawListing(l, nil)
+		r, err := drawListing(l, highlight{})
 		if err != nil {
 			return err
 		}
@@ -534,7 +554,8 @@ func (b *builder) codeScene(ctx context.Context, i int, s Scene,
 		if err := savePNG(r.Img, png); err != nil {
 			return err
 		}
-		return stillScene(ctx, png, b.timings[i].Length, out)
+		return stillScene(ctx, png, b.timings[i].Length,
+			s.Code.Scroll == "smooth", out)
 	}
 
 	// ---- One segment per step ----
@@ -544,7 +565,7 @@ func (b *builder) codeScene(ctx context.Context, i int, s Scene,
 	prevY := -1
 
 	for k, st := range s.Steps {
-		r, err := drawListing(l, st.Focus)
+		r, err := drawListing(l, highlight{st.Focus, st.Marks})
 		if err != nil {
 			return fmt.Errorf("step %d: %w", k+1, err)
 		}
@@ -570,7 +591,11 @@ func (b *builder) codeScene(ctx context.Context, i int, s Scene,
 		}
 
 		seg := b.scenePath(i, fmt.Sprintf("step-%02d.mp4", k+1))
-		if err := scrollSegment(ctx, png, prevY, y, end-t.Cuts[k],
+		from := y
+		if s.Code.Scroll == "smooth" {
+			from = prevY
+		}
+		if err := viewSegment(ctx, png, from, y, end-t.Cuts[k],
 			seg); err != nil {
 			return err
 		}
@@ -582,13 +607,17 @@ func (b *builder) codeScene(ctx context.Context, i int, s Scene,
 	return joinVideos(ctx, segments, out)
 }
 
-// scrollSegment shows a frame-high window of img for length seconds,
-// easing its top from y0 to y1 (smoothstep over scrollSecs).
-func scrollSegment(ctx context.Context, img string, y0, y1 int,
+// viewSegment shows a frame-high window of img for length seconds,
+// its top at y1; from a different y0 it eases there (smoothstep over
+// scrollSecs).
+func viewSegment(ctx context.Context, img string, y0, y1 int,
 	length float64, out string) error {
 
-	s := fmt.Sprintf("min(t/%s,1)", ftoa(scrollSecs))
-	y := fmt.Sprintf("%d+(%d)*%s*%s*(3-2*%s)", y0, y1-y0, s, s, s)
+	y := fmt.Sprint(y1)
+	if y0 != y1 {
+		s := fmt.Sprintf("min(t/%s,1)", ftoa(scrollSecs))
+		y = fmt.Sprintf("%d+(%d)*%s*%s*(3-2*%s)", y0, y1-y0, s, s, s)
+	}
 	vf := fmt.Sprintf("crop=%d:%d:0:'%s',%s", frameW, frameH, y, fitFilter)
 
 	return ffmpeg(ctx, "", nil, append([]string{

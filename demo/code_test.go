@@ -107,7 +107,7 @@ func TestWrapTokens(t *testing.T) {
 
 func TestDrawListing(t *testing.T) {
 	files, _ := parseDiff(sampleDiff)
-	r, err := drawListing(&listing{Files: files, Diff: true}, nil)
+	r, err := drawListing(&listing{Files: files, Diff: true}, highlight{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestFocus(t *testing.T) {
 	files, _ := parseDiff(sampleDiff)
 	l := &listing{Files: files[:1], Diff: true}
 
-	r, err := drawListing(l, []int{2, 3})
+	r, err := drawListing(l, highlight{Focus: []int{2, 3}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestFocus(t *testing.T) {
 
 	// Positions are per file: focus on a multi-file listing is refused
 	if _, err := drawListing(&listing{Files: files, Diff: true},
-		[]int{1, 2}); err == nil {
+		highlight{Focus: []int{1, 2}}); err == nil {
 		t.Fatal("focus on 3 files accepted")
 	}
 }
@@ -214,6 +214,25 @@ func TestCodeSpecCheck(t *testing.T) {
 	for _, c := range bad {
 		if c.check() == nil {
 			t.Errorf("accepted %+v", c)
+		}
+	}
+}
+
+func TestMarks(t *testing.T) {
+	files, _ := parseDiff(sampleDiff)
+	l := &listing{Files: files[:1], Diff: true}
+
+	// Found inside the focus: fine
+	if _, err := drawListing(l, highlight{Focus: []int{2, 3},
+		Marks: []string{"y = 3"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Only outside it, or nowhere: a typo, so an error
+	for _, m := range []string{"package", "nope"} {
+		if _, err := drawListing(l, highlight{Focus: []int{2, 3},
+			Marks: []string{m}}); err == nil {
+			t.Errorf("mark %q accepted", m)
 		}
 	}
 }
