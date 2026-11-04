@@ -111,6 +111,8 @@ func (s Scene) check() error {
 const (
 	fps = 30
 
+	captionBand = 128 // px under the 1280x960 picture
+
 	leadIn  = 0.2 // silence before a scene's narration
 	tailOut = 0.4 // and after it
 
@@ -252,10 +254,13 @@ func (b *builder) build(ctx context.Context, video string) error {
 		return err
 	}
 
-	// Captions are burned on the CPU (libass), then encoded on the GPU
-	style := "FontName=DejaVu Sans,FontSize=13,PrimaryColour=&H00FFFFFF," +
-		"BorderStyle=3,Outline=6,OutlineColour=&H60000000,Shadow=0," +
-		"MarginV=22"
+	// Captions get a band of their own under the picture, so they never
+	// hide code. Burned on the CPU (libass), then encoded on the GPU.
+	// Sizes are in libass units: 288 = the video's height.
+	band := fmt.Sprintf("pad=%d:%d:0:0:color=0x0d1117", frameW,
+		frameH+captionBand)
+	style := "FontName=DejaVu Sans,FontSize=10,PrimaryColour=&H00FFFFFF," +
+		"BorderStyle=1,Outline=0,Shadow=0,MarginV=6"
 
 	err := ffmpeg(ctx, b.work, nil,
 		"-vaapi_device", renderNode,
@@ -264,7 +269,7 @@ func (b *builder) build(ctx context.Context, video string) error {
 		"-f", "ffmetadata", "-i", "chapters.txt",
 		"-map", "0:v", "-map", "1:a",
 		"-map_metadata", "2", "-map_chapters", "2",
-		"-vf", "subtitles=captions.srt:force_style='"+style+"',"+
+		"-vf", band+",subtitles=captions.srt:force_style='"+style+"',"+
 			"format=nv12,hwupload",
 		"-c:v", "h264_vaapi", "-qp", "24",
 		"-c:a", "aac", "-b:a", "128k",
