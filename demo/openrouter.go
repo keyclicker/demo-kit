@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"time"
 )
@@ -54,6 +55,8 @@ func synthesize(ctx context.Context, key string,
 			return sp, err
 		}
 
+		fmt.Fprintf(os.Stderr, "demo: speech API busy, retry %d/%d in %s\n",
+			attempt, maxAttempts-1, wait)
 		select {
 		case <-ctx.Done():
 			return speech{}, ctx.Err()
