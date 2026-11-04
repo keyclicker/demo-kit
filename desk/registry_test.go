@@ -24,8 +24,7 @@ func TestParseDisplay(t *testing.T) {
 // websockify's TokenFile skips "#" lines and splits the rest on ":\s"
 func TestTokenFileParsesLikeWebsockify(t *testing.T) {
 	line := regexp.MustCompile(`^(\w+):\s(127\.0\.0\.1:\d+)$`)
-	file := tokenFile(12, Owner{PID: 42, Start: 7, Name: "claude"},
-		"/home/u/public/recordings/a b.mp4")
+	file := tokenFile(12, Owner{PID: 42, Start: 7, Name: "claude"})
 	var targets []string
 
 	for _, l := range strings.Split(file, "\n") {

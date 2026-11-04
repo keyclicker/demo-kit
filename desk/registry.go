@@ -47,21 +47,17 @@ type Desktop struct {
 	// Owner is the agent that created a desk desktop; nil for :0.
 	Owner *Owner `json:"owner,omitempty"`
 
-	// Recording is the mp4 a desk desktop records itself into.
-	Recording string `json:"recording,omitempty"`
+	// Recording is the display's running desk rec, if any.
+	Recording *Recording `json:"recording,omitempty"`
 }
 
 func unitName(n int) string  { return fmt.Sprintf("desk-%d", n) }
 func tokenPath(n int) string { return filepath.Join(stateDir, strconv.Itoa(n)) }
 
-// recordingPrefix marks the token comment naming the desktop's video.
-const recordingPrefix = "# recording: "
-
 // tokenFile renders the websockify TokenFile entry for display n.
-func tokenFile(n int, owner Owner, video string) string {
-	return fmt.Sprintf("%s\n%s\n%s%s\n%d: 127.0.0.1:%d\n",
-		managedMark, ownerLine(owner), recordingPrefix, video,
-		n, basePort+n)
+func tokenFile(n int, owner Owner) string {
+	return fmt.Sprintf("%s\n%s\n%d: 127.0.0.1:%d\n",
+		managedMark, ownerLine(owner), n, basePort+n)
 }
 
 // parseDisplay accepts "10" or ":10" within desk's display range.
@@ -75,10 +71,10 @@ func parseDisplay(s string) (int, error) {
 	return n, nil
 }
 
-// unitAlive reports whether desk-N is starting or running.
-func unitAlive(n int) bool {
+// unitAlive reports whether a user unit is starting or running.
+func unitAlive(unit string) bool {
 	out, _ := exec.Command("systemctl", "--user", "show",
-		"--property=ActiveState", "--value", unitName(n)).Output()
+		"--property=ActiveState", "--value", unit).Output()
 
 	switch strings.TrimSpace(string(out)) {
 	case "active", "activating", "reloading":
@@ -92,10 +88,12 @@ func unitAlive(n int) bool {
 
 // cmdNew starts desk-N on the lowest free display and prints ":N" once
 // the desktop is ready for clients. It belongs to the calling agent,
-// records itself, and goes away when that agent exits.
+// records itself (unless -no-rec), and goes away when that agent exits.
 func cmdNew(args []string) error {
 	fs := flag.NewFlagSet("new", flag.ExitOnError)
 	size := fs.String("size", "1280x960", "screen size, WxH")
+	noRec := fs.Bool("no-rec", false,
+		"don't record; `desk rec start` when you want to")
 	fs.Parse(args)
 
 	owner, err := callerOwner()
@@ -127,21 +125,13 @@ func cmdNew(args []string) error {
 
 	unit := unitName(n)
 
-	video, err := recordingPath(n)
-	if err != nil {
-		return err
-	}
-
-	// Type=notify: systemd-run returns once `desk run` reports ready.
-	// KillMode=mixed: stop signals only `desk run`, which shuts ffmpeg
-	// down before Xvnc so the video gets finalized.
+	// Type=notify: systemd-run returns once `desk run` reports ready
 	start := exec.Command("systemd-run", "--user", "--quiet", "--collect",
 		"--unit="+unit, fmt.Sprintf("--description=desk :%d", n),
 		"--property=Type=notify", "--property=TimeoutStartSec=30",
-		"--property=KillMode=mixed",
 		fmt.Sprintf("--property=ExecStopPost=%s cleanup %d", self, n),
 		self, "run", fmt.Sprintf("-owner=%d:%d", owner.PID, owner.Start),
-		"-record="+video, strconv.Itoa(n), *size)
+		strconv.Itoa(n), *size)
 	start.Stderr = os.Stderr
 
 	if err := start.Run(); err != nil {
@@ -150,7 +140,23 @@ func cmdNew(args []string) error {
 	}
 
 	fmt.Printf(":%d\n", n)
-	fmt.Fprintf(os.Stderr, "recording: %s (finalized by desk rm)\n", video)
+
+	if *noRec {
+		return nil
+	}
+
+	// The same recorder as `desk rec start`; no video is no reason to
+	// lose the desktop
+	video, err := recordingPath(n)
+	if err == nil {
+		err = startRec(n, owner, video)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "desk: not recording: %v\n", err)
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "recording: %s (saved by desk rm)\n", video)
 	return nil
 }
 
@@ -172,21 +178,28 @@ func cmdList(args []string) error {
 	me, _ := callerOwner()
 
 	for _, d := range desks {
+		var line string
+
 		switch {
 		case !d.ViewOnly && d.Owner == nil:
-			fmt.Printf("%-4s user, interactive\n", d.Display)
+			line = "user, interactive"
 		case !d.ViewOnly && d.Owner.Same(me):
-			fmt.Printf("%-4s user, claimed by %s (yours)\n",
-				d.Display, d.Owner)
+			line = fmt.Sprintf("user, claimed by %s (yours)", d.Owner)
 		case !d.ViewOnly:
-			fmt.Printf("%-4s user, claimed by %s\n", d.Display, d.Owner)
+			line = fmt.Sprintf("user, claimed by %s", d.Owner)
 		case d.Owner == nil:
-			fmt.Printf("%-4s desk, owner unknown\n", d.Display)
+			line = "desk, owner unknown"
 		case d.Owner.Same(me):
-			fmt.Printf("%-4s %s (yours)\n", d.Display, d.Owner)
+			line = fmt.Sprintf("%s (yours)", d.Owner)
 		default:
-			fmt.Printf("%-4s %s\n", d.Display, d.Owner)
+			line = d.Owner.String()
 		}
+
+		if r := d.Recording; r != nil {
+			line += ", " + r.state()
+		}
+
+		fmt.Printf("%-4s %s\n", d.Display, line)
 	}
 
 	return nil
@@ -265,8 +278,13 @@ func cmdRemove(args []string) error {
 
 	// ---- Stop ----
 
+	// Recordings stop first (After=), so videos are final before Xvnc
+	// goes. Listed too, so stop waits for them.
 	units := []string{"--user", "stop"}
 	for _, n := range targets {
+		if owned[n].Recording != nil {
+			units = append(units, recUnitName(n))
+		}
 		units = append(units, unitName(n))
 	}
 
@@ -279,14 +297,8 @@ func cmdRemove(args []string) error {
 	}
 
 	for _, n := range targets {
-		video := owned[n].Recording
-		if video == "" {
-			continue
-		}
-
-		fmt.Printf(":%d recording: %s\n", n, video)
-		if u := recordingURL(video); u != "" {
-			fmt.Printf(":%d url: %s\n", n, u)
+		if r := owned[n].Recording; r != nil {
+			printRecording(n, r.Video)
 		}
 	}
 
@@ -320,7 +332,7 @@ func list() ([]Desktop, error) {
 		managed := strings.Contains(string(data), managedMark)
 		if managed {
 			n, err := parseDisplay(token)
-			if err != nil || !unitAlive(n) {
+			if err != nil || !unitAlive(unitName(n)) {
 				os.Remove(path)
 				continue
 			}
@@ -331,9 +343,10 @@ func list() ([]Desktop, error) {
 			if o, ok := parseOwnerLine(line); ok {
 				desk.Owner = &o
 			}
-			if video, ok := strings.CutPrefix(line, recordingPrefix); ok {
-				desk.Recording = video
-			}
+		}
+
+		if n, err := strconv.Atoi(token); err == nil {
+			desk.Recording = readRec(n)
 		}
 
 		// A user display's owner is the agent holding its claim
@@ -359,7 +372,7 @@ func freeDisplay() (int, error) {
 		taken := exists(fmt.Sprintf("/tmp/.X11-unix/X%d", n)) ||
 			exists(fmt.Sprintf("/tmp/.X%d-lock", n)) ||
 			exists(tokenPath(n)) ||
-			unitAlive(n)
+			unitAlive(unitName(n)) || unitAlive(recUnitName(n))
 
 		if !taken {
 			return n, nil

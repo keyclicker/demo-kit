@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -20,7 +21,7 @@ import (
 // recordDir, under $HOME, is served over Tailscale as /public/recordings.
 const recordDir = "public/recordings"
 
-// recordingPath names the video of a desktop started now on display n.
+// recordingPath names a recording of display n started now.
 func recordingPath(n int) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -64,48 +65,128 @@ func recordingURL(video string) string {
 
 // ---- Recording ----
 
-// startRecording grabs display n into path with ffmpeg until
-// stopRecording. env must carry the display's XAUTHORITY.
-func startRecording(n int, path string, env []string) (*exec.Cmd, error) {
+// segment is one ffmpeg grabbing a display into one mp4. A recording
+// is one or more segments: a pause ends one, a resume starts the next.
+type segment struct {
+	path string
+	cmd  *exec.Cmd
+	done chan struct{} // closed once ffmpeg exits
+}
+
+// startSegment grabs display (":N") into path. It returns once ffmpeg
+// reports its first progress, so a display it can't open fails here.
+// env must carry the display's XAUTHORITY.
+func startSegment(display, path string, env []string) (*segment, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
 
 	// Encode on the 890M (VAAPI), color conversion included: ~4% of a
 	// core at 30 fps, vs ~50% for libx264 veryfast
-	ffmpeg := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
+	cmd := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
+		"-nostats", "-progress", "pipe:1", "-y",
 		"-vaapi_device", renderNode,
-		"-f", "x11grab", "-framerate", "30", "-i", ":"+strconv.Itoa(n),
+		"-f", "x11grab", "-framerate", "30", "-i", display,
 
 		// nv12 (yuv420p) plays everywhere but needs even sides
 		"-vf", "hwupload,"+
 			"scale_vaapi=w=trunc(iw/2)*2:h=trunc(ih/2)*2:format=nv12",
 		"-c:v", "h264_vaapi", "-qp", "28",
 		"-movflags", "+faststart", path)
-	ffmpeg.Env = env
-	ffmpeg.Stderr = os.Stderr
+	cmd.Env = env
+	cmd.Stderr = os.Stderr
 
-	return ffmpeg, ffmpeg.Start()
-}
-
-// stopRecording makes ffmpeg finalize the video: an mp4 is unplayable
-// until its trailer is written.
-func stopRecording(ffmpeg *exec.Cmd) {
-	if ffmpeg == nil {
-		return
+	progress, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
 	}
 
-	done := make(chan struct{})
-	go func() { ffmpeg.Wait(); close(done) }()
+	seg := &segment{path: path, cmd: cmd, done: make(chan struct{})}
+	go func() { cmd.Wait(); close(seg.done) }()
 
-	ffmpeg.Process.Signal(syscall.SIGINT)
+	// First progress block (~0.5 s in) = frames are being encoded
+	started := make(chan struct{})
+	go func() {
+		lines := bufio.NewScanner(progress)
+		for lines.Scan() {
+			if strings.HasPrefix(lines.Text(), "progress=") && started != nil {
+				close(started)
+				started = nil
+			}
+		}
+	}()
 
 	select {
-	case <-done:
-	case <-time.After(20 * time.Second):
-		ffmpeg.Process.Kill()
-		<-done
+	case <-started:
+		return seg, nil
+	case <-seg.done:
+		return nil, fmt.Errorf("ffmpeg on %s exited at start", display)
+	case <-time.After(15 * time.Second):
+		seg.stop()
+		return nil, fmt.Errorf("ffmpeg on %s: no frames after 15s", display)
 	}
+}
+
+// stop makes ffmpeg finalize the segment: an mp4 is unplayable until
+// its trailer is written.
+func (s *segment) stop() {
+	s.cmd.Process.Signal(syscall.SIGINT)
+
+	select {
+	case <-s.done:
+	case <-time.After(20 * time.Second):
+		s.cmd.Process.Kill()
+		<-s.done
+	}
+}
+
+// partPath names segment k (from 1) of the recording at path.
+func partPath(path string, k int) string {
+	ext := filepath.Ext(path)
+	return fmt.Sprintf("%s.part%d%s", strings.TrimSuffix(path, ext), k, ext)
+}
+
+// joinSegments makes the parts one video at path, losslessly (same
+// encoder, same flags, so the concat demuxer can copy), then removes
+// the parts.
+func joinSegments(path string, parts []string) error {
+	if len(parts) == 1 {
+		return os.Rename(parts[0], path)
+	}
+
+	list, err := os.CreateTemp("", "desk-concat-*.txt")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(list.Name())
+
+	list.WriteString(concatList(parts))
+	list.Close()
+
+	join := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error", "-y",
+		"-f", "concat", "-safe", "0", "-i", list.Name(),
+		"-c", "copy", "-movflags", "+faststart", path)
+	if out, err := join.CombinedOutput(); err != nil {
+		return fmt.Errorf("join %d segments: %v: %s", len(parts), err, out)
+	}
+
+	for _, p := range parts {
+		os.Remove(p)
+	}
+	return nil
+}
+
+// concatList renders an ffmpeg concat demuxer script for files.
+func concatList(files []string) string {
+	var b strings.Builder
+	for _, f := range files {
+		quoted := strings.ReplaceAll(f, "'", `'\''`)
+		fmt.Fprintf(&b, "file '%s'\n", quoted)
+	}
+	return b.String()
 }
 
 // ---- Frame clock ----
