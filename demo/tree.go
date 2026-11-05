@@ -49,8 +49,8 @@ func (n *node) add(path string) {
 }
 
 // readTree lists dir as a tree, depth levels deep: what git tracks or
-// would track in a repo (ignored files left out), else every file not
-// under a dot-name.
+// would track in a repo (ignored files left out), else, or when git
+// ignores all of dir, every file not under a dot-name.
 func readTree(ctx context.Context, dir string, depth int) (*listing, error) {
 	if depth == 0 {
 		depth = defaultDepth
@@ -84,38 +84,61 @@ func readTree(ctx context.Context, dir string, depth int) (*listing, error) {
 	}
 
 	file := &codeFile{Path: homePath(dir), Hunks: []*hunk{h},
-		Status: fileCount(len(paths))}
+		Status: plural(len(paths), "file")}
 	return &listing{Files: []*codeFile{file}, Tree: true}, nil
 }
 
-// treeFiles lists files under dir, relative and slash-separated.
+// treeFiles lists files under dir, relative and slash-separated: git's
+// list in a repo, else (or for a directory git ignores) a walk.
 func treeFiles(ctx context.Context, dir string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "ls-files",
-		"--cached", "--others", "--exclude-standard", "-z")
-	if out, err := cmd.Output(); err == nil {
-		var files []string
-		for _, f := range strings.Split(string(out), "\x00") {
-			if f != "" {
-				files = append(files, f)
-			}
-		}
+	if files := gitFiles(ctx, dir); len(files) > 0 {
 		return files, nil
 	}
+	return walkFiles(dir)
+}
 
-	// Not a repo: walk it, skipping dot-names
+// gitFiles lists what git tracks or would track under dir; nil outside
+// a repo.
+func gitFiles(ctx context.Context, dir string) []string {
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "ls-files",
+		"--cached", "--others", "--exclude-standard", "-z")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
 	var files []string
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	for _, f := range strings.Split(string(out), "\x00") {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	return files
+}
+
+// walkFiles lists every file under dir, skipping dot-names. A symlinked
+// dir is walked where it points: WalkDir doesn't follow its root.
+func walkFiles(dir string) ([]string, error) {
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var files []string
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry,
+		err error) error {
+
 		if err != nil {
 			return err
 		}
-		if p != dir && strings.HasPrefix(d.Name(), ".") {
+		if p != root && strings.HasPrefix(d.Name(), ".") {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		if !d.IsDir() {
-			rel, _ := filepath.Rel(dir, p)
+			rel, _ := filepath.Rel(root, p)
 			files = append(files, filepath.ToSlash(rel))
 		}
 		return nil
@@ -142,7 +165,7 @@ func treeLines(n *node, prefix string, depth int) []string {
 
 		if depth <= 1 {
 			lines = append(lines, fmt.Sprintf("%s%s%s/%s…%s", prefix,
-				branch, d, treeNote, fileCount(child.count)))
+				branch, d, treeNote, plural(child.count, "file")))
 			continue
 		}
 		lines = append(lines, prefix+branch+d+"/")
@@ -156,12 +179,12 @@ func treeLines(n *node, prefix string, depth int) []string {
 	return lines
 }
 
-// fileCount counts files in words: "1 file", "12 files".
-func fileCount(n int) string {
+// plural counts things in words: "1 file", "12 files".
+func plural(n int, noun string) string {
 	if n == 1 {
-		return "1 file"
+		return "1 " + noun
 	}
-	return fmt.Sprintf("%d files", n)
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // entryGlyphs are an entry's branch, and the prefix its children get.

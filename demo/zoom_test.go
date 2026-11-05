@@ -6,31 +6,35 @@ import (
 	"testing"
 )
 
-func TestZoomRect(t *testing.T) {
-	// No zoom: the whole frame
-	if r, _ := zoomRect(nil, 1280, 960); r != fullFrame {
-		t.Fatalf("none: %+v", r)
+func TestZoomView(t *testing.T) {
+	view := func(box []int, w, h int) rect {
+		t.Helper()
+		r, err := fitRegion(box, w, h)
+		if err != nil {
+			t.Fatalf("%v: %v", box, err)
+		}
+		return zoomView(r)
 	}
 
 	// A wide region grows to 4:3 around its center
-	r, err := zoomRect([]int{400, 400, 640, 100}, 1280, 960)
-	if err != nil || r != (rect{400, 210, 640, 480}) {
-		t.Fatalf("wide: %+v %v", r, err)
+	if r := view([]int{400, 400, 640, 100}, 1280, 960); r !=
+		(rect{400, 210, 640, 480}) {
+		t.Fatalf("wide: %+v", r)
 	}
 
 	// A tiny one stops at maxZoom; at the edge it stays inside
-	r, _ = zoomRect([]int{0, 0, 10, 10}, 1280, 960)
-	if r != (rect{0, 0, frameW / maxZoom, frameH / maxZoom}) {
+	if r := view([]int{0, 0, 10, 10}, 1280, 960); r !=
+		(rect{0, 0, frameW / maxZoom, frameH / maxZoom}) {
 		t.Fatalf("tiny: %+v", r)
 	}
 
 	// Through the fit: 1920x1080 is letterboxed, 120 px bars
-	r, _ = zoomRect([]int{0, 0, 960, 540}, 1920, 1080)
-	if r != (rect{0, 60, 640, 480}) {
+	if r := view([]int{0, 0, 960, 540}, 1920, 1080); r !=
+		(rect{0, 60, 640, 480}) {
 		t.Fatalf("letterboxed: %+v", r)
 	}
 
-	if _, err := zoomRect([]int{1000, 0, 400, 10}, 1280, 960); err == nil {
+	if _, err := fitRegion([]int{1000, 0, 400, 10}, 1280, 960); err == nil {
 		t.Fatal("outside the clip: accepted")
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"strings"
@@ -24,14 +25,25 @@ type SlideSpec struct {
 }
 
 // check rejects slides with no headline or two, and ones that don't
-// fit a frame.
+// fit a frame: too tall, or a line too wide.
 func (s SlideSpec) check() error {
 	if btoi(s.Title != "")+btoi(s.Callout != "")+btoi(s.End != "") != 1 {
 		return errors.New("slide: needs exactly one of title, callout, end")
 	}
-	if slideHeight(s.blocks()) > frameH-2*slidePad {
+	blocks := s.blocks()
+	if slideHeight(blocks) > frameH-2*slidePad {
 		return errors.New("slide: too much text for a frame: show a " +
 			"markdown file as code instead")
+	}
+
+	// A word longer than a line doesn't wrap: it would run off the frame
+	for _, b := range blocks {
+		for _, line := range b.lines {
+			if textWidth(b.face, line) > slideWidth {
+				return fmt.Errorf("slide: %q is too wide for a frame: "+
+					"shorten it, or break it with spaces", line)
+			}
+		}
 	}
 	return nil
 }
@@ -84,6 +96,11 @@ func newBlock(texts []string, bold bool, size float64,
 	}
 	return textBlock{lines: lines, face: face, rowH: int(size * 1.35),
 		col: col}
+}
+
+// texts is every text the slide shows.
+func (s SlideSpec) texts() []string {
+	return append([]string{s.Title, s.Callout, s.End, s.Text}, s.Lines...)
 }
 
 // slideHeight is the blocks' height, gaps included.

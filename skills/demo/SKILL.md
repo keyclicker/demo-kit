@@ -59,9 +59,15 @@ Record anything on a desk display, driven with `x11-computer-use` or
 ```sh
 W=~/public/demos/demo-kit-desk-rec; mkdir -p $W/artifacts
 D=$(desk new --no-rec)
-desk rec start -o $W/artifacts/pause.mp4 $D   # act; pause/resume skip dead time
+desk rec start -o $W/artifacts/tour.mp4 $D   # act; idle frames drop by themselves
 desk rec stop $D
 ```
+
+A UI tour: record it once, then cut it into a scene per beat with
+`from`/`to`, each said over what it shows. Text must read at 1280x960:
+zoom the page (Ctrl+plus) or the app's font until body text is big,
+and give a step a `zoom` on what it talks about: the picture closes in
+on it (a `box` spotlights it instead, or as well).
 
 Commands and their output need no recording: a `term` scene runs
 them once and draws the typing. For interactive programs (TUIs,
@@ -87,8 +93,9 @@ demo code --tree --depth 2 desk      # a file tree, numbered for focus
 Speech: `demo say "a line"` plays it (`--voice NAME` to try one).
 Voices: `demo voices` lists the names Gemini takes, with their style;
 the default is Umbriel. A second speaker or a quote: a scene's
-`"voice": {"name": "Charon"}`. The voice takes direction: `instructions` is plain English (pace,
-mood, role), and Gemini acts on it. A scene's `voice` changes only the
+`"voice": {"name": "Charon"}`. The voice takes direction:
+`instructions` is plain English (pace, mood, role), and Gemini acts
+on it. A scene's `voice` changes only the
 fields it sets: `{"voice": {"instructions": "Slower, serious: this is
 the risky part."}}`. Keep the tuned default for most scenes; direct
 the few where the tone turns (a warning, a punchline, the end card).
@@ -105,9 +112,10 @@ captions) and `--scene 3` preview into `~/tmp/demo`.
 {"title": "desk rec", "scenes": [
   {"chapter": "Why", "image": "artifacts/before.png", "steps": [
     {"say": "..."}, {"say": "...", "box": [880, 140, 300, 60]},
-    {"say": "...", "arrow": [1030, 400]}]},
-  {"clip": "artifacts/pause.mp4", "from": 3, "to": 20, "steps": [
+    {"say": "...", "box": [880, 140, 300, 60], "zoom": [700, 40, 640, 300]}]},
+  {"clip": "artifacts/tour.mp4", "from": 3, "to": 20, "steps": [
     {"say": "..."}, {"say": "...", "zoom": [960, 80, 240, 220]}]},
+  {"clip": "artifacts/tour.mp4", "from": 20, "to": 31, "say": "..."},
   {"term": {"run": ["desk new --no-rec", "desk ls"]}, "steps": [
     {"say": "..."}, {"say": "..."}]},
   {"code": {"file": "desk/rec.go", "lines": [440, 480]}, "steps": [
@@ -115,22 +123,23 @@ captions) and `--scene 3` preview into `~/tmp/demo`.
     {"say": "...", "focus": [464, 466]}]},
   {"code": {"diff": ["origin/master...HEAD", "--", "desk/"],
             "hunks": [2]}, "say": "..."},
-  {"compare": [{"image": "artifacts/a.png", "label": "before"},
-               {"image": "artifacts/b.png", "label": "after"}], "say": "..."},
   {"slide": {"end": "Thanks", "lines": ["PR #12", "next: ..."]}, "say": "..."}
 ]}
 ```
 
 Every field, one line each: `demo build -h`. Narration sets each
 scene's length; steps point at the picture as they're said (a code
-focus, an image's box or arrow, a clip's zoom, a terminal's next
-command). Recordings lose idle frames and speed up to fit. Mistakes
-fail with a reason. Cut clips with `from`/`to`, not by hand: with
-`audio: true` the cuts move into pauses, so speech never stops
+focus, an image's box, a zoom on an image or a clip, a terminal's
+next command).
+Recordings lose idle frames and speed up to fit; a clip with nothing
+said plays as it is. Code and terminals size themselves to the frame
+(`"align": "top"` keeps short code up top; terminals always are).
+Mistakes fail with a reason. Cut clips with `from`/`to`, not by hand:
+with `audio: true` the cuts move into pauses, so speech never stops
 mid-word.
 
-Lists, notes and anything longer than a slide: write markdown into
-`artifacts/` and show it as `code`, a step per point with its focus.
+Lists and notes longer than a slide: markdown in `artifacts/`, shown
+as `code` with a step per point. It counts as slides.
 
 Before sending, look at every scene: `demo frames $W/demo.mp4` tiles
 a frame every few seconds into one PNG.

@@ -17,6 +17,14 @@ func TestFrameTimes(t *testing.T) {
 	if got := frameTimes(10, 4); !slices.Equal(got, []float64{2, 6}) {
 		t.Fatalf("every 4: %v", got)
 	}
+
+	// Too short for a step, or a step too long: its middle
+	if got := frameTimes(1, 0); !slices.Equal(got, []float64{0.5}) {
+		t.Fatalf("1 s: %v", got)
+	}
+	if got := frameTimes(10, 30); !slices.Equal(got, []float64{5}) {
+		t.Fatalf("every 30: %v", got)
+	}
 }
 
 func TestSheetPath(t *testing.T) {

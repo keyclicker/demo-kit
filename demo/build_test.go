@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,9 +66,12 @@ func TestLoadScript(t *testing.T) {
 	// A scene's voice goes over the script's; steps fit any picture
 	os.WriteFile(path, []byte(`{"voice": {"name": "Charon"}, "scenes": [
 		{"say": "a", "slide": {"title": "T"}, "voice": {"tempo": 1.5}},
-		{"say": "b", "compare": [{"image": "x.png"}, {"image": "y.png"}]},
+		{"say": "b", "image": "x.png"},
 		{"clip": "a.mp4", "audio": true, "steps": [{"say": "c"}]},
 		{"image": "i.png", "steps": [{"say": "d", "box": [1, 2, 3, 4]}]},
+		{"clip": "a.mp4", "steps": [{"say": "g", "zoom": [1, 2, 3, 4]}]},
+		{"image": "i.png", "steps": [{"say": "h", "box": [1, 2, 3, 4],
+			"zoom": [0, 0, 9, 9]}]},
 		{"term": {"run": ["ls", "pwd"]}, "steps": [{"say": "e"}, {"say": "f"}]}]}`),
 		0o644)
 	if s, err = loadScript(path); err != nil {
@@ -79,8 +84,8 @@ func TestLoadScript(t *testing.T) {
 	if v := s.Scenes[1].Voice; v.Tempo != defaultVoice.Tempo {
 		t.Fatalf("inherited voice: %+v", v)
 	}
-	if s.Scenes[1].Compare[0].Image != filepath.Join(dir, "x.png") {
-		t.Fatalf("pane not resolved: %s", s.Scenes[1].Compare[0].Image)
+	if s.Scenes[1].Image != filepath.Join(dir, "x.png") {
+		t.Fatalf("image not resolved: %s", s.Scenes[1].Image)
 	}
 	if s.Scenes[2].decimate() {
 		t.Fatal("audio kept decimate on")
@@ -97,11 +102,12 @@ func TestLoadScript(t *testing.T) {
 		"term steps":  `{"scenes": [{"term": {"run": ["a", "b"]}, "steps": [{"say": "y"}]}]}`,
 		"term empty":  `{"scenes": [{"say": "x", "term": {"run": []}}]}`,
 		"two slides":  `{"scenes": [{"say": "x", "slide": {"title": "a", "end": "b"}}]}`,
-		"one pane":    `{"scenes": [{"say": "x", "compare": [{"image": "a"}]}]}`,
+		"term zoom":   `{"scenes": [{"term": {"run": ["a"]}, "steps": [{"say": "y", "zoom": [0, 0, 5, 5]}]}]}`,
+		"clip box":    `{"scenes": [{"clip": "a", "steps": [{"say": "y", "box": [0, 0, 5, 5]}]}]}`,
+		"bad align":   `{"scenes": [{"say": "y", "code": {"file": "a", "align": "middle"}}]}`,
 		"bad focus":   `{"scenes": [{"code": {"file": "a"}, "steps": [{"say": "y", "focus": [3]}]}]}`,
 		"empty mark":  `{"scenes": [{"code": {"file": "a"}, "steps": [{"say": "y", "marks": [""]}]}]}`,
-		"bad scroll":  `{"scenes": [{"say": "y", "code": {"file": "a", "scroll": "fast"}}]}`,
-		"no length":   `{"scenes": [{"clip": "a"}]}`,
+		"no length":   `{"scenes": [{"slide": {"title": "a"}}]}`,
 		"typo":        `{"scenes": [{"say": "x", "clp": "a"}]}`,
 		"empty":       `{"scenes": []}`,
 	}
@@ -126,5 +132,69 @@ func TestPageCount(t *testing.T) {
 		if got := pageCount(tall); got != want {
 			t.Errorf("pageCount(%d) = %d, want %d", tall, got, want)
 		}
+	}
+}
+
+func TestFinalFilter(t *testing.T) {
+	// libass refuses an empty captions file: a silent video has none
+	if vf := finalFilter(false); strings.Contains(vf, "subtitles") {
+		t.Fatalf("no captions: %s", vf)
+	}
+	if vf := finalFilter(true); !strings.Contains(vf, "subtitles=") {
+		t.Fatalf("captions: %s", vf)
+	}
+}
+
+func TestUncached(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	v := defaultVoice
+	scenes := []Scene{{Say: "cached", Voice: &v}, {Secs: 1, Voice: &v}}
+
+	wav, err := cachePath(v, "cached")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !uncached(scenes) {
+		t.Fatal("missing line: cached")
+	}
+
+	os.WriteFile(wav, nil, 0o644)
+	if uncached(scenes) {
+		t.Fatal("cached line: needs the key")
+	}
+}
+
+func TestClipPastEnd(t *testing.T) {
+	clip := lavfiClip(t, "testsrc=d=1:s=64x48:r=30")
+	s := Scene{Clip: clip, From: 5, Secs: 1, num: 1}
+	b := newBuilder(&Script{Scenes: []Scene{s}}, t.TempDir(), true)
+
+	err := b.cutClips(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "past the clip's end") {
+		t.Fatalf("%v", err)
+	}
+}
+
+// A clip with nothing said plays its own cut, every frame
+func TestSilentClipLength(t *testing.T) {
+	clip := lavfiClip(t, "testsrc=d=3:s=64x48:r=30")
+	s := Scene{Clip: clip, From: 1, num: 1}
+	if err := s.check(); err != nil {
+		t.Fatal(err)
+	}
+	if s.decimate() {
+		t.Fatal("nothing said, yet idle frames drop")
+	}
+
+	b := newBuilder(&Script{Scenes: []Scene{s}}, t.TempDir(), true)
+	ctx := context.Background()
+	if err := b.cutClips(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.speak(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if l := b.timings[0].Length; math.Abs(l-2) > 0.05 {
+		t.Fatalf("length %.2f, want the cut's 2 s", l)
 	}
 }
