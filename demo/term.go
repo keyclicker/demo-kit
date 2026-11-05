@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -22,6 +25,8 @@ import (
 // run for real, once, in one shell on a pty (so tools color their
 // output), then the typing and output are drawn frame by frame. It
 // takes as long as the commands do, not as long as watching them.
+// Scenes' sessions run one after another, in script order, before any
+// scene is drawn: a later one may use what an earlier one made.
 
 // TermSpec is a terminal session: Run's commands, typed and run in
 // turn in one shell in Dir (default: the current directory).
@@ -48,19 +53,26 @@ func (t TermSpec) check(steps int) error {
 	return nil
 }
 
-// The terminal: code's size and font, under a header bar
+// The terminal: code's font and sizes, under a header bar. Commands
+// run termCols wide, the default size's; a session whose screen fits
+// a larger size unwrapped is drawn at it
 const (
-	termFont    = 20
-	termRowH    = 28
 	termTimeout = 2 * time.Minute
 
 	typeCPS = 30 // typing speed, chars/s, when there's time for it
 )
 
-var (
-	termCols = (frameW - 2*margin) / 12 // JetBrains Mono 20 px: 12 px
-	termRows = (frameH - fileRowH - 2*margin) / termRowH
-)
+var termCols = termColsAt(unifiedMetrics)
+
+// termColsAt is how many columns a terminal at m's size shows.
+func termColsAt(m metrics) int {
+	return (frameW - 2*margin) / int(math.Round(0.6*m.fontSize))
+}
+
+// termRowsAt is how many rows a terminal at m's size shows.
+func termRowsAt(m metrics) int {
+	return (frameH - fileRowH - 2*margin) / m.rowH
+}
 
 // ---- Running ----
 
@@ -70,57 +82,74 @@ type termResult struct {
 	Status int
 }
 
-// Markers between commands in the session's output
-const (
-	cmdStart = "\x1e"
-	cmdEnd   = "\x1f"
-)
+// markers delimit commands in a session's output. Random per run, so
+// no command's own output can fake one.
+type markers struct{ start, end string }
+
+// newMarkers makes a run's markers: a control byte and a random token.
+func newMarkers() markers {
+	token := rand.Text()
+	return markers{start: "\x1e" + token, end: "\x1f" + token}
+}
 
 // runTerm runs t's commands in one bash on a pty (script(1)), stdin
 // closed and pagers off, and splits the output per command.
 func runTerm(ctx context.Context, t TermSpec, scriptPath string) (
 	[]termResult, error) {
 
+	mark := newMarkers()
 	var sh strings.Builder
-	fmt.Fprintf(&sh, "stty cols %d rows %d 2>/dev/null\n", termCols, termRows)
+	fmt.Fprintf(&sh, "stty cols %d rows %d 2>/dev/null\n", termCols,
+		termRowsAt(unifiedMetrics))
 	for _, c := range t.Run {
 		fmt.Fprintf(&sh, "printf '%s'\n{ %s\n} </dev/null\n"+
-			"printf '%s%%d\\n' $?\n", cmdStart, c, cmdEnd)
+			"printf '%s%%d\\n' $?\n", mark.start, c, mark.end)
 	}
 	if err := os.WriteFile(scriptPath, []byte(sh.String()), 0o644); err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, termTimeout)
+	timed, cancel := context.WithTimeout(ctx, termTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "script", "--quiet", "--echo", "never",
-		"--command", "bash --noprofile --norc "+shellQuote(scriptPath),
-		"/dev/null")
+	cmd := exec.CommandContext(timed, "script", "--quiet", "--echo",
+		"never", "--command", "bash --noprofile --norc "+
+			shellQuote(scriptPath), "/dev/null")
 	cmd.Dir = t.Dir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "PAGER=cat",
 		"GIT_PAGER=cat", "COLUMNS="+strconv.Itoa(termCols))
 
-	out, err := cmd.Output()
-	if ctx.Err() != nil {
-		return nil, fmt.Errorf("term: still running after %s", termTimeout)
+	// Its own process group, killed whole: script, and with its pty
+	// gone, the session's bash and commands (they get SIGHUP)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
-	if err != nil {
+
+	out, err := cmd.Output()
+	switch {
+	case ctx.Err() != nil:
+		return nil, fmt.Errorf("term: %w", context.Cause(ctx))
+	case timed.Err() != nil:
+		return nil, fmt.Errorf("term: still running after %s", termTimeout)
+	case err != nil:
 		return nil, fmt.Errorf("term: script: %w", err)
 	}
-	return splitSession(string(out), len(t.Run))
+	return splitSession(string(out), len(t.Run), mark)
 }
 
-// splitSession cuts a session's output at the markers into n results.
-func splitSession(out string, n int) ([]termResult, error) {
-	parts := strings.Split(out, cmdStart)
+// splitSession cuts a session's output at its markers into n results.
+func splitSession(out string, n int, mark markers) ([]termResult,
+	error) {
+
+	parts := strings.Split(out, mark.start)
 	if len(parts) != n+1 {
 		return nil, fmt.Errorf("term: %d of %d commands ran", len(parts)-1, n)
 	}
 
 	var results []termResult
 	for _, p := range parts[1:] {
-		body, status, found := strings.Cut(p, cmdEnd)
+		body, status, found := strings.Cut(p, mark.end)
 		if !found {
 			return nil, errors.New("term: a command ended the shell")
 		}
@@ -146,8 +175,9 @@ var ansiColors = [16]color.RGBA{
 }
 
 // parseANSI reads terminal output into lines of colored runs: SGR
-// colors and bold are kept, other escapes dropped, a lone \r starts
-// its line over (progress bars), tabs expand to 8.
+// colors and bold are kept, other escapes dropped, \r's before a \n
+// are part of it (CRLF), a lone \r starts its line over (progress
+// bars), tabs expand to 8.
 func parseANSI(s string) [][]run {
 	var lines [][]run
 	var line []run
@@ -180,9 +210,17 @@ func parseANSI(s string) [][]run {
 		case c == '\n':
 			lines, line, cols = append(lines, line), nil, 0
 		case c == '\r':
-			if i+1 < len(s) && s[i+1] != '\n' {
+			// \r\n ends a line, as does \r\r\n: a program's own CRLF
+			// after the pty's onlcr. A lone \r starts the line over
+			j := i
+			for j < len(s) && s[j] == '\r' {
+				j++
+			}
+			if j < len(s) && s[j] != '\n' {
 				line, cols = nil, 0
 			}
+			i = j
+			continue
 		case c == '\t':
 			put(strings.Repeat(" ", 8-cols%8))
 		case c < 0x20 || c == 0x7f:
@@ -304,22 +342,46 @@ func color256(n int) color.Color {
 
 // ---- Drawing ----
 
-// termShots runs scene i's commands, then plays them back: each
-// command typed and its output shown within its step (all of them in
-// turn when the scene just says).
-func (b *builder) termShots(ctx context.Context, i int, s Scene, n int,
-	cuts []int) (shots, error) {
+// session is a term scene's run: where, and each command's result.
+type session struct {
+	dir     string
+	results []termResult
+}
+
+// runSessions runs every term scene's commands, one scene after
+// another in script order (a scene may use what an earlier one made),
+// and keeps them for termShots.
+func (b *builder) runSessions(ctx context.Context) error {
+	b.sessions = make([]session, len(b.script.Scenes))
+	for i, s := range b.script.Scenes {
+		if s.Term == nil {
+			continue
+		}
+
+		sess, err := runSession(ctx, s, b.scenePath(i, "term.sh"))
+		if err != nil {
+			return fmt.Errorf("scene %d: %w", s.num, err)
+		}
+		b.sessions[i] = sess
+	}
+	return nil
+}
+
+// runSession runs scene s's commands in its directory, warning about
+// the ones that fail.
+func runSession(ctx context.Context, s Scene, scriptPath string) (session,
+	error) {
 
 	dir, err := filepath.Abs(orDefault(s.Term.Dir, "."))
 	if err != nil {
-		return nil, err
+		return session{}, err
 	}
 	spec := *s.Term
 	spec.Dir = dir
 
-	results, err := runTerm(ctx, spec, b.scenePath(i, "term.sh"))
+	results, err := runTerm(ctx, spec, scriptPath)
 	if err != nil {
-		return nil, err
+		return session{}, err
 	}
 	for k, r := range results {
 		if r.Status != 0 {
@@ -327,6 +389,15 @@ func (b *builder) termShots(ctx context.Context, i int, s Scene, n int,
 				spec.Run[k], r.Status)
 		}
 	}
+	return session{dir, results}, nil
+}
+
+// termShots plays scene i's session back: each command typed and its
+// output shown within its step (all of them in turn when the scene
+// just says).
+func (b *builder) termShots(i int, s Scene, n int, cuts []int) shots {
+	sess := b.sessions[i]
+	results := sess.results
 
 	// Which commands play in which slot of frames
 	type slot struct{ from, to, start, end int }
@@ -343,7 +414,8 @@ func (b *builder) termShots(ctx context.Context, i int, s Scene, n int,
 		}
 	}
 
-	screen := newScreen(dir)
+	screen := newScreen(sess.dir)
+	screen.fit(s.Term.Run, results)
 	return func(emit func(shot) error) error {
 		for _, sl := range slots {
 			count := sl.to - sl.from
@@ -352,15 +424,15 @@ func (b *builder) termShots(ctx context.Context, i int, s Scene, n int,
 				from := sl.start + (sl.end-sl.start)*j/count
 				to := sl.start + (sl.end-sl.start)*(j+1)/count
 
-				err := screen.play(spec.Run[k], results[k].Output, to-from,
-					emit)
+				err := screen.play(s.Term.Run[k], results[k].Output,
+					to-from, emit)
 				if err != nil {
 					return err
 				}
 			}
 		}
 		return nil
-	}, nil
+	}
 }
 
 // orDefault is s, or def when s is empty.
@@ -372,11 +444,13 @@ func orDefault(s, def string) string {
 }
 
 // screen is the terminal being played back: finished lines, and the
-// prompt the next command is typed at.
+// prompt the next command is typed at; drawn at size, its lines right
+// under the header bar, as a real terminal fills from the top.
 type screen struct {
 	header string
 	prompt []run
 	lines  [][]run
+	size   metrics
 }
 
 // newScreen is an empty terminal in dir, its prompt as the demo zsh's
@@ -390,6 +464,35 @@ func newScreen(dir string) *screen {
 		header: homePath(dir),
 		prompt: []run{{text: name, col: ansiColors[4]}, {text: " "},
 			{text: "$", col: ansiColors[2]}, {text: " "}},
+		size: unifiedMetrics,
+	}
+}
+
+// fit sizes the screen to the session's last picture, every command
+// and its output: the largest size that shows it all and wraps no more
+// than the default. One size for the whole scene, so nothing jumps
+// while it plays.
+func (sc *screen) fit(run []string, results []termResult) {
+	final := &screen{prompt: sc.prompt}
+	for k, r := range results {
+		final.enter(commandRuns(run[k]), r.Output)
+	}
+	lines := append(final.lines, final.promptLines(nil)...)
+
+	rows := func(m metrics) (n, wraps int) {
+		for _, l := range lines {
+			k := len(wrapTokens(l, termColsAt(m)))
+			n, wraps = n+k, wraps+k-1
+		}
+		return n, wraps
+	}
+
+	_, wraps := rows(unifiedMetrics)
+	for _, m := range largeMetrics {
+		if n, w := rows(m); n <= termRowsAt(m) && w <= wraps {
+			sc.size = m
+			return
+		}
 	}
 }
 
@@ -421,14 +524,17 @@ func (sc *screen) play(command, output string, n int,
 		return err
 	}
 
-	// ---- Enter: the command and its output scroll into history ----
+	sc.enter(typed, output)
+	return emit(sc.shot(nil, rest))
+}
 
+// enter moves a typed command and its output into history.
+func (sc *screen) enter(typed [][]run, output string) {
 	sc.lines = append(sc.lines, sc.promptLines(typed)...)
-	out := parseANSI(strings.TrimRight(output, "\r\n"))
 	if strings.TrimSpace(output) != "" {
+		out := parseANSI(strings.TrimRight(output, "\r\n"))
 		sc.lines = append(sc.lines, out...)
 	}
-	return emit(sc.shot(nil, rest))
 }
 
 // promptLines is a typed command at the prompt, a line per line of it,
@@ -452,7 +558,7 @@ func (sc *screen) promptLines(cmd [][]run) [][]run {
 // for n frames.
 func (sc *screen) shot(typed [][]run, n int) shot {
 	lines := append(append([][]run{}, sc.lines...), sc.promptLines(typed)...)
-	return shot{img: drawTerm(sc.header, lines), n: n}
+	return shot{img: sc.draw(lines), n: n}
 }
 
 // commandRuns colors a command as the shell would see it, a []run per
@@ -490,22 +596,24 @@ func prefixRuns(lines [][]run, n int) [][]run {
 	return out
 }
 
-// drawTerm draws a terminal screen: a header bar with the directory,
-// then the last lines that fit, wrapped, and a block cursor at the end.
-func drawTerm(header string, lines [][]run) *image.RGBA {
+// draw draws the terminal with lines on it: a header bar with the
+// directory, then the last lines that fit, wrapped, and a block cursor
+// at the end.
+func (sc *screen) draw(lines [][]run) *image.RGBA {
+	m := sc.size
 	img := newCanvas(frameH)
-	regular, bold := monoFace(false, termFont), monoFace(true, termFont)
+	regular, bold := monoFace(false, m.fontSize), monoFace(true, m.fontSize)
 	adv := textWidth(regular, "M")
 
 	fill(img, 0, 0, frameW, fileRowH, colFileBG)
-	x := drawText(img, bold, margin, 0, fileRowH, header, colText)
+	x := drawText(img, bold, margin, 0, fileRowH, sc.header, colText)
 	drawText(img, regular, x, 0, fileRowH, "  terminal", colDim)
 
 	var rows [][]run
 	for _, l := range lines {
-		rows = append(rows, wrapTokens(l, termCols)...)
+		rows = append(rows, wrapTokens(l, termColsAt(m))...)
 	}
-	rows = rows[max(0, len(rows)-termRows):]
+	rows = rows[max(0, len(rows)-termRowsAt(m)):]
 
 	y := fileRowH + margin
 	end := margin
@@ -516,13 +624,13 @@ func drawTerm(header string, lines [][]run) *image.RGBA {
 			if r.bold {
 				face = bold
 			}
-			x = drawText(img, face, x, y, termRowH, r.text, r.col)
+			x = drawText(img, face, x, y, m.rowH, r.text, r.col)
 		}
 		end = x
-		y += termRowH
+		y += m.rowH
 	}
 
 	// The cursor, after the last line's text
-	fill(img, end, y-termRowH+3, adv, termRowH-6, colText)
+	fill(img, end, y-m.rowH+3, adv, m.rowH-6, colText)
 	return img
 }

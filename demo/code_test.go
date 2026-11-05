@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alecthomas/chroma/v2"
@@ -211,6 +214,8 @@ func TestCodeSpecCheck(t *testing.T) {
 		{File: "a", Diff: []string{}},
 		{File: "a", Hunks: []int{1}},
 		{File: "a", Lines: []int{5, 2}},
+		{File: "a", Context: new(int)},
+		{Diff: []string{}, Context: new(-1)},
 	}
 	for _, c := range bad {
 		if c.check() == nil {
@@ -289,9 +294,50 @@ func TestRemovedLinesInSpan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	span := r.rows[2] // "-var x = 1" and "+var x = 2"
-	if span[1]-span[0] != 2*unifiedMetrics.rowH {
-		t.Fatalf("span of position 2 = %v, want two rows", span)
+	span, one := r.rows[2], r.rows[1] // "-var x = 1", "+var x = 2"
+	if span[1]-span[0] != 2*(one[1]-one[0]) {
+		t.Fatalf("span of position 2 = %v, want two rows of %v", span, one)
+	}
+}
+
+// A short listing draws large, its header on top and its code a third
+// down (or right under it, aligned top); a long one at the default
+// size from the top
+func TestListingSize(t *testing.T) {
+	short := &listing{Files: []*codeFile{{Path: "a.go", Hunks: []*hunk{{
+		Lines: []codeLine{{Kind: ' ', Text: "package main", Pos: 1}}}}}}}
+	r, err := drawListing(short, highlight{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if span := r.rows[1]; span[1]-span[0] != largeMetrics[0].rowH ||
+		span[0] < frameH/4 || span[0] > frameH/2 {
+		t.Fatalf("short listing's line at %v", span)
+	}
+	if c := r.Img.RGBAAt(frameW/2, margin+fileRowH/2); c != colFileBG {
+		t.Fatalf("header not on top: %v", c)
+	}
+
+	short.Align = alignTop
+	if r, err = drawListing(short, highlight{}); err != nil {
+		t.Fatal(err)
+	}
+	if span := r.rows[1]; span[0] != margin+fileRowH {
+		t.Fatalf("top-aligned line at %v", span)
+	}
+
+	var lines []codeLine
+	for i := range 40 {
+		lines = append(lines, codeLine{Kind: ' ', Text: "x", Pos: i + 1})
+	}
+	long := &listing{Files: []*codeFile{{Path: "a.go",
+		Hunks: []*hunk{{Lines: lines}}}}}
+	if r, err = drawListing(long, highlight{}); err != nil {
+		t.Fatal(err)
+	}
+	if span := r.rows[1]; span[1]-span[0] != unifiedMetrics.rowH ||
+		span[0] > 2*fileRowH {
+		t.Fatalf("long listing's first line at %v", span)
 	}
 }
 
@@ -321,5 +367,95 @@ func TestListingHeightCap(t *testing.T) {
 	l := &listing{Files: []*codeFile{{Path: "big.txt", Hunks: []*hunk{h}}}}
 	if _, err := drawListing(l, highlight{}); err == nil {
 		t.Fatal("2000 lines drawn")
+	}
+}
+
+// Paths git still quotes (quotes, backslashes) come out unquoted
+func TestQuotedPaths(t *testing.T) {
+	files, err := parseDiff(`diff --git "a/say \"hi\".go" "b/say \"hi\".go"
+--- "a/say \"hi\".go"
++++ "b/say \"hi\".go"
+@@ -1 +1 @@
+-a
++b
+diff --git "a/\321\204.txt" "b/\321\204.txt"
+new file mode 100644
+Binary files /dev/null and "b/\321\204.txt" differ
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := files[0].Path; p != `say "hi".go` {
+		t.Errorf("+++ path %q", p)
+	}
+	if p := files[1].Path; p != "ф.txt" {
+		t.Errorf("diff --git path %q", p)
+	}
+}
+
+// With -U0, git names the line before a removal: it sits after it
+func TestNoContextRemovalPos(t *testing.T) {
+	files, err := parseDiff(`diff --git a/n b/n
+--- a/n
++++ b/n
+@@ -10 +9,0 @@
+-10
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := files[0].Hunks[0].Lines[0]; l.Pos != 10 || l.Old != 10 {
+		t.Fatalf("removed line 10: %+v, want Pos 10", l)
+	}
+}
+
+// readDiff: context 0 is 0, and paths are plain whatever git's config
+func TestReadDiffConfig(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	nums := strings.Repeat("x\n", 9) + "gone\n" + strings.Repeat("y\n", 9)
+	os.WriteFile(filepath.Join(dir, "файл.txt"), []byte(nums), 0o644)
+	git("init", "-q")
+	git("add", "-A")
+	git("-c", "user.name=t", "-c", "user.email=t@t", "-c",
+		"commit.gpgsign=false", "commit", "-qm", "init")
+	git("config", "diff.mnemonicPrefix", "true")
+	os.WriteFile(filepath.Join(dir, "файл.txt"),
+		[]byte(strings.Replace(nums, "gone\n", "", 1)), 0o644)
+
+	t.Chdir(dir)
+	l, err := readDiff(context.Background(),
+		CodeSpec{Diff: []string{}, Context: new(int)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f := l.Files[0]
+	if f.Path != "файл.txt" {
+		t.Errorf("path %q", f.Path)
+	}
+	if lines := f.Hunks[0].Lines; len(lines) != 1 || lines[0].Pos != 10 {
+		t.Errorf("-U0: %+v", lines)
+	}
+}
+
+// A FILE's flags may follow it
+func TestCodeFlagsAfterFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "a.go")
+	out := filepath.Join(dir, "a.png")
+	os.WriteFile(src, []byte("package a\n\nvar x = 1\n"), 0o644)
+
+	err := cmdCode([]string{src, "--focus", "3-3", "--mark", "x", "-o", out})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,12 +27,12 @@ type Script struct {
 }
 
 // Scene is one narrated shot with exactly one picture: Clip (a video,
-// optionally From/To seconds), or one drawn here: Image, Code, Term,
-// Slide or Compare.
+// optionally From/To seconds), or one drawn here: Image, Code, Term or
+// Slide.
 //
 // Narration is Say, or Steps: lines spoken one after another, each
 // pointing at part of the picture (code Focus and Marks, an image's
-// Box, a terminal's next command).
+// Box, a Zoom on an image or a clip, a terminal's next command).
 type Scene struct {
 	Chapter string `json:"chapter,omitempty"` // starts a chapter
 	Say     string `json:"say,omitempty"`
@@ -44,11 +45,10 @@ type Scene struct {
 	Audio    bool    `json:"audio,omitempty"`    // keep its sound, ducked
 	Decimate *bool   `json:"decimate,omitempty"` // drop idle frames: default
 
-	Image   string     `json:"image,omitempty"`
-	Code    *CodeSpec  `json:"code,omitempty"`
-	Term    *TermSpec  `json:"term,omitempty"`
-	Slide   *SlideSpec `json:"slide,omitempty"`
-	Compare []Pane     `json:"compare,omitempty"`
+	Image string     `json:"image,omitempty"`
+	Code  *CodeSpec  `json:"code,omitempty"`
+	Term  *TermSpec  `json:"term,omitempty"`
+	Slide *SlideSpec `json:"slide,omitempty"`
 
 	// Secs is the scene's minimum length; needed when nothing is said
 	Secs float64 `json:"secs,omitempty"`
@@ -57,15 +57,14 @@ type Scene struct {
 }
 
 // Step is one beat of narration. On code, Focus lines [from, to]
-// light up and Marks box text inside them; on an image (in its
-// pixels), Box [x, y, w, h] is spotlit and Arrow [x, y] pointed at; on
-// a clip (in its pixels), Zoom [x, y, w, h] fills the frame.
+// light up and Marks box text inside them; on an image, Box [x, y, w,
+// h] (its pixels) is spotlit; on an image or a clip, Zoom [x, y, w, h]
+// (its pixels) fills the frame. Box and Zoom go alone or together.
 type Step struct {
 	Say   string   `json:"say"`
 	Focus []int    `json:"focus,omitempty"`
 	Marks []string `json:"marks,omitempty"`
 	Box   []int    `json:"box,omitempty"`
-	Arrow []int    `json:"arrow,omitempty"`
 	Zoom  []int    `json:"zoom,omitempty"`
 }
 
@@ -101,9 +100,6 @@ func loadScript(path string) (*Script, error) {
 		sc := &s.Scenes[i]
 		sc.num = i + 1
 		sc.Clip, sc.Image = resolve(sc.Clip), resolve(sc.Image)
-		for k := range sc.Compare {
-			sc.Compare[k].Image = resolve(sc.Compare[k].Image)
-		}
 
 		v := s.Voice
 		if sc.Voice != nil {
@@ -117,6 +113,10 @@ func loadScript(path string) (*Script, error) {
 		if err := sc.check(); err != nil {
 			return nil, fmt.Errorf("scene %d: %w", sc.num, err)
 		}
+		if sc.Slide != nil {
+			warnGlyphs(os.Stderr, fmt.Sprintf("scene %d", sc.num),
+				sc.Slide.texts())
+		}
 	}
 	return &s, nil
 }
@@ -126,17 +126,17 @@ func loadScript(path string) (*Script, error) {
 func (s Scene) check() error {
 	sources := 0
 	for _, set := range []bool{s.Clip != "", s.Image != "", s.Code != nil,
-		s.Term != nil, s.Slide != nil, s.Compare != nil} {
+		s.Term != nil, s.Slide != nil} {
 		sources += btoi(set)
 	}
 
 	switch {
 	case sources != 1:
 		return errors.New("needs exactly one of clip, image, code, term, " +
-			"slide, compare")
+			"slide")
 	case s.Say != "" && s.Steps != nil:
 		return errors.New("say or steps, not both")
-	case len(s.parts()) == 0 && s.Secs <= 0:
+	case len(s.parts()) == 0 && s.Secs <= 0 && s.Clip == "":
 		return errors.New("needs say or steps, or secs for a silent scene")
 	case s.To != 0 && s.To <= s.From:
 		return errors.New("to must be after from")
@@ -160,8 +160,6 @@ func (s Scene) check() error {
 		return s.Term.check(len(s.Steps))
 	case s.Slide != nil:
 		return s.Slide.check()
-	case s.Compare != nil:
-		return checkCompare(s.Compare)
 	}
 	return nil
 }
@@ -174,19 +172,16 @@ func (s Scene) checkStep(st Step) error {
 		return errors.New("needs say")
 	case (st.Focus != nil || st.Marks != nil) && s.Code == nil:
 		return errors.New("focus and marks need a code scene")
-	case (st.Box != nil || st.Arrow != nil) && s.Image == "":
-		return errors.New("box and arrow need an image scene")
-	case st.Zoom != nil && s.Clip == "":
-		return errors.New("zoom needs a clip scene")
+	case st.Box != nil && s.Image == "":
+		return errors.New("box needs an image scene (a clip: zoom)")
+	case st.Zoom != nil && s.Image == "" && s.Clip == "":
+		return errors.New("zoom needs an image or a clip scene")
 	case slices.Contains(st.Marks, ""):
 		return errors.New("empty mark")
 	case st.Box != nil && !isRegion(st.Box):
-		return errors.New("box: want [x, y, w, h] in image pixels")
+		return errors.New("box: want [x, y, w, h] in the image's pixels")
 	case st.Zoom != nil && !isRegion(st.Zoom):
-		return errors.New("zoom: want [x, y, w, h] in the clip's pixels")
-	case st.Arrow != nil && (len(st.Arrow) != 2 || st.Arrow[0] < 0 ||
-		st.Arrow[1] < 0):
-		return errors.New("arrow: want [x, y] in image pixels")
+		return errors.New("zoom: want [x, y, w, h] in its pixels")
 	}
 	return checkRange("focus", st.Focus)
 }
@@ -197,12 +192,12 @@ func isRegion(r []int) bool {
 }
 
 // decimate is whether a clip drops its idle frames: yes unless told,
-// or keeping its sound.
+// keeping its sound, or with nothing said (no narration to fit).
 func (s Scene) decimate() bool {
 	if s.Decimate != nil {
 		return *s.Decimate
 	}
-	return !s.Audio
+	return !s.Audio && len(s.parts()) > 0
 }
 
 // parts is what the scene says, as steps: Say is a single step.
@@ -233,23 +228,24 @@ script.json: one object
     code     object  file: path, diff: [git diff args], or tree: dir
                      (depth: levels, default 3); then hunks: [n, ...],
                      lines: [from, to], split: true for a diff side by
-                     side, scroll: "smooth" to ease between views
+                     side; align: "top" (default "center": a short one
+                     a third down, under its header)
     term     object  run: [commands], typed into a terminal and run for
                      real in one shell (dir: where; default here)
     slide    object  title, callout (one huge line) or end (a closing
                      card); text: a line under it; lines: [a list]
-    compare  array   2-3 images side by side: [{image, label}, ...]
   and narration:
     say      string  spoken over the scene; it sets the scene's length
     steps    array   [{say, ...}]: lines spoken in turn, each pointing:
                      code: focus: [from, to] lights lines, marks: [text]
                      boxes text in them; image (in its pixels): box:
-                     [x, y, w, h] spotlights a region, arrow: [x, y]
-                     points at a spot; clip (in its pixels): zoom:
-                     [x, y, w, h] fills the frame with a region, eased
-                     in; term: one step per command
+                     [x, y, w, h] spotlights a region; image or clip
+                     (in its pixels): zoom: [x, y, w, h] fills the
+                     frame with a region, eased in; term: one step per
+                     command
     voice    object  this scene's voice, over the script's
-    secs     number  minimum length; needed when nothing is said
+    secs     number  minimum length; needed when nothing is said, but
+                     a clip then plays its own length
     chapter  string  starts a chapter here
 
 Clips and images resolve against the script; code and term against
@@ -267,8 +263,7 @@ const (
 	stepGap = 0.25 // between steps
 	tailOut = 0.4  // after it
 
-	scrollSecs = 0.35 // a smooth focus change scrolls this long
-	pageStep   = 864  // px a tall still advances per page: 3 lines kept
+	pageStep = 864 // px a tall still advances per page: 3 lines kept
 
 	// maxSpeed warns past it: a clip that needs more is too long for
 	// its narration (cut From/To, or say more)
@@ -362,7 +357,8 @@ func cmdBuild(args []string) error {
 		os.Exit(2)
 	}
 
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 	script, err := loadScript(fs.Arg(0))
 	if err != nil {
 		return err
@@ -464,9 +460,11 @@ type builder struct {
 	fit   string
 	codec []string
 
-	speech  [][]spoken // per scene, per step
-	timings []timing
-	cues    []cue
+	speech   [][]spoken // per scene, per step
+	timings  []timing
+	cues     []cue
+	sessions []session // per scene: a term scene's run (runSessions)
+	cuts     []span    // per scene: a clip's cut (cutClips)
 }
 
 // newBuilder sets a build up: full size, or for a draft half size and
@@ -481,10 +479,16 @@ func newBuilder(s *Script, work string, draft bool) *builder {
 	return b
 }
 
-// build runs every stage: speech, scene videos, scene audio, then one
-// final encode with captions and chapters.
+// build runs every stage: speech, term sessions, scene videos, scene
+// audio, then one final encode with captions and chapters.
 func (b *builder) build(ctx context.Context, video string) error {
+	if err := b.cutClips(ctx); err != nil {
+		return err
+	}
 	if err := b.speak(ctx); err != nil {
+		return err
+	}
+	if err := b.runSessions(ctx); err != nil {
 		return err
 	}
 
@@ -541,16 +545,7 @@ func (b *builder) build(ctx context.Context, video string) error {
 		// The scenes as they are: no band, no captions, no re-encode
 		args = append(args, "-c:v", "copy")
 	} else {
-		// Captions get a band of their own under the picture, so they
-		// never hide code. Burned on the CPU (libass), then encoded on
-		// the GPU. Sizes are in libass units: 288 = the video's height.
-		band := fmt.Sprintf("pad=%d:%d:0:0:color=0x0d1117", frameW,
-			frameH+captionBand)
-		style := "FontName=DejaVu Sans,FontSize=10," +
-			"PrimaryColour=&H00FFFFFF,BorderStyle=1,Outline=0,Shadow=0," +
-			"MarginV=6"
-		args = append(args, "-vf", band+",subtitles=captions.srt:"+
-			"force_style='"+style+"',format=nv12,hwupload",
+		args = append(args, "-vf", finalFilter(len(b.cues) > 0),
 			"-c:v", "h264_vaapi", "-qp", "24")
 	}
 
@@ -560,6 +555,55 @@ func (b *builder) build(ctx context.Context, video string) error {
 		return err
 	}
 	return os.Rename(partial, video)
+}
+
+// finalFilter is the final encode's picture: a band of its own under
+// the frame for captions, so they never hide code, and with captions
+// (none when nothing is said: libass refuses an empty file) burned in
+// on the CPU (libass), then uploaded for the GPU encode. Sizes are in
+// libass units: 288 = the video's height.
+func finalFilter(captions bool) string {
+	vf := fmt.Sprintf("pad=%d:%d:0:0:color=0x0d1117", frameW,
+		frameH+captionBand)
+	if captions {
+		style := "FontName=DejaVu Sans,FontSize=10," +
+			"PrimaryColour=&H00FFFFFF,BorderStyle=1,Outline=0,Shadow=0," +
+			"MarginV=6"
+		vf += ",subtitles=captions.srt:force_style='" + style + "'"
+	}
+	return vf + ",format=nv12,hwupload"
+}
+
+// cutClips settles where each clip is cut: from and to (its end if
+// unset), moved into pauses when it keeps its sound (quietCuts).
+// Before timing: a clip with nothing said lasts as long as its cut.
+func (b *builder) cutClips(ctx context.Context) error {
+	b.cuts = make([]span, len(b.script.Scenes))
+	for i, s := range b.script.Scenes {
+		if s.Clip == "" {
+			continue
+		}
+
+		// Past the end there's nothing to cut: say so, not ffmpeg
+		length, err := probeDuration(ctx, s.Clip)
+		if err != nil {
+			return fmt.Errorf("scene %d: %w", s.num, err)
+		}
+		if s.From >= length {
+			return fmt.Errorf("scene %d: from %.1f s: past the clip's end "+
+				"(%.1f s)", s.num, s.From, length)
+		}
+
+		c := span{s.From, cmp.Or(s.To, length)}
+		if s.Audio {
+			if c.from, c.to, err = quietCuts(ctx, s); err != nil {
+				return fmt.Errorf("scene %d: %w", s.num, err)
+			}
+			c.to = cmp.Or(c.to, length)
+		}
+		b.cuts[i] = c
+	}
+	return nil
 }
 
 // speak synthesizes every step of every scene in parallel (cached ones
@@ -573,18 +617,20 @@ func (b *builder) speak(ctx context.Context) error {
 	var wg sync.WaitGroup
 	limit := make(chan struct{}, 6) // requests in flight
 
+	// The key only when a line has to be bought: a cached build works
+	// with the keyring locked
+	if uncached(scenes) {
+		key, err := apiKey(ctx)
+		if err != nil {
+			return err
+		}
+		b.key = key
+	}
+
 	for i, s := range scenes {
 		parts := s.parts()
 		b.speech[i] = make([]spoken, len(parts))
 		durs[i] = make([]float64, len(parts))
-
-		if len(parts) > 0 && b.key == "" {
-			key, err := apiKey(ctx)
-			if err != nil {
-				return err
-			}
-			b.key = key
-		}
 
 		for k, p := range parts {
 			wg.Go(func() {
@@ -613,7 +659,11 @@ func (b *builder) speak(ctx context.Context) error {
 
 	at := 0.0
 	for i, s := range scenes {
-		t := sceneTiming(durs[i], s.Secs)
+		secs := s.Secs
+		if c := b.cuts[i]; secs == 0 && s.Clip != "" {
+			secs = c.to - c.from // nothing said: the clip's own length
+		}
+		t := sceneTiming(durs[i], secs)
 		b.timings = append(b.timings, t)
 
 		for k, p := range s.parts() {
@@ -631,15 +681,35 @@ func (b *builder) speak(ctx context.Context) error {
 	return nil
 }
 
+// uncached reports whether any line scenes say is missing from the TTS
+// cache (cachePath).
+func uncached(scenes []Scene) bool {
+	for _, s := range scenes {
+		for _, p := range s.parts() {
+			wav, err := cachePath(*s.Voice, p.Say)
+			if err != nil {
+				return true
+			}
+			if _, err := os.Stat(wav); err != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // maxSlideShare is how much of a video slides may fill before build
 // warns: past it, it's a slideshow read aloud, not a demo.
 const maxSlideShare = 0.4
 
-// slideShare is the part of scenes' length that slides fill.
+// slideShare is the part of scenes' length that slides fill: slide
+// scenes, and markdown shown as code (a slide too long for one).
 func slideShare(scenes []Scene, timings []timing) float64 {
 	var slides, total float64
 	for i, s := range scenes {
-		if s.Slide != nil {
+		prose := s.Code != nil && strings.EqualFold(filepath.Ext(s.Code.File),
+			".md")
+		if s.Slide != nil || prose {
 			slides += timings[i].Length
 		}
 		total += timings[i].Length
@@ -683,42 +753,42 @@ func (b *builder) sceneVideo(ctx context.Context, i int) error {
 		return b.clipScene(ctx, i, s, t, out)
 	}
 
-	shots, err := b.drawnShots(ctx, i, s, t)
+	shots, views, err := b.drawnShots(ctx, i, s, t)
 	if err != nil {
 		return err
 	}
-	return b.drawnVideo(ctx, frameCount(t.Length), shots, out)
+
+	vf := b.fit
+	if views != nil {
+		n := frameCount(t.Length)
+		vf = zoomFilter(views, t.cutFrames(), n) + "," + vf
+	}
+	return b.drawnVideo(ctx, frameCount(t.Length), shots, vf, out)
 }
 
 // drawnShots draws a scene's picture: one, held (paged if tall), or
-// one per step, each pointing at what its step says.
+// one per step, each pointing at what its step says. Views are where
+// an image's steps zoom, nil for none.
 func (b *builder) drawnShots(ctx context.Context, i int, s Scene,
-	t timing) (shots, error) {
+	t timing) (shots, []rect, error) {
 
 	n, cuts := frameCount(t.Length), t.cutFrames()
 
 	switch {
 	case s.Code != nil:
-		return codeShots(ctx, s, n, cuts)
+		sh, err := codeShots(ctx, s, n, cuts)
+		return sh, nil, err
 	case s.Image != "":
 		return imageShots(s, n, cuts)
 	case s.Term != nil:
-		return b.termShots(ctx, i, s, n, cuts)
-	case s.Slide != nil:
-		img := drawSlide(*s.Slide)
-		return still(img, n, false), nil
+		return b.termShots(i, s, n, cuts), nil, nil
 	default:
-		img, err := drawCompare(s.Compare)
-		if err != nil {
-			return nil, err
-		}
-		return still(img, n, false), nil
+		return still(drawSlide(*s.Slide), n), nil, nil
 	}
 }
 
 // codeShots draws a code scene. Plain narration: one drawing, paged if
-// tall (or with scroll "smooth", one pan). Steps: one drawing per step,
-// its focus lit and its view on it.
+// tall. Steps: one drawing per step, its focus lit and its view on it.
 func codeShots(ctx context.Context, s Scene, n int, cuts []int) (shots,
 	error) {
 
@@ -726,17 +796,17 @@ func codeShots(ctx context.Context, s Scene, n int, cuts []int) (shots,
 	if err != nil {
 		return nil, err
 	}
-	smooth := s.Code.Scroll == "smooth"
+	warnGlyphs(os.Stderr, fmt.Sprintf("scene %d", s.num), l.texts())
 
 	if s.Steps == nil {
 		r, err := drawListing(l, highlight{})
 		if err != nil {
 			return nil, err
 		}
-		return still(r.Img, n, smooth), nil
+		return still(r.Img, n), nil
 	}
 
-	return stepShots(cuts, n, smooth, func(k int) (stepView, error) {
+	return stepShots(cuts, n, func(k int) (stepView, error) {
 		st := s.Steps[k]
 		r, err := drawListing(l, highlight{st.Focus, st.Marks})
 		if err != nil {
@@ -753,24 +823,36 @@ func codeShots(ctx context.Context, s Scene, n int, cuts []int) (shots,
 }
 
 // imageShots shows an image: fitted to the frame, or to its width and
-// paged if taller. Steps with a box or an arrow point there, the view
-// on it; steps without show the image plain.
-func imageShots(s Scene, n int, cuts []int) (shots, error) {
+// paged if taller. A step's box is spotlit and its zoom zoomed into,
+// the view on them; steps without show the image plain.
+func imageShots(s Scene, n int, cuts []int) (shots, []rect, error) {
 	p, err := loadPicture(s.Image)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if s.Steps == nil {
-		return still(p.canvas, n, false), nil
+		return still(p.canvas, n), nil, nil
 	}
 
-	return stepShots(cuts, n, false, func(k int) (stepView, error) {
-		if st := s.Steps[k]; st.Box != nil || st.Arrow != nil {
-			return p.point(st)
+	// Aimed up front, so a bad box fails before any frame is drawn
+	aims := make([]aim, len(s.Steps))
+	for k, st := range s.Steps {
+		if aims[k], err = p.aim(st); err != nil {
+			return nil, nil, fmt.Errorf("step %d: %w", k+1, err)
 		}
-		return stepView{p.canvas, -1}, nil
-	}), nil
+	}
+
+	var views []rect
+	if hasZoom(s.Steps) {
+		for _, a := range aims {
+			views = append(views, a.view)
+		}
+	}
+
+	return stepShots(cuts, n, func(k int) (stepView, error) {
+		return p.point(aims[k]), nil
+	}), views, nil
 }
 
 // clipScene fast-cuts a recording: idle frames go (mpdecimate, unless
@@ -786,20 +868,12 @@ func (b *builder) clipScene(ctx context.Context, i int, s Scene, t timing,
 		return err
 	}
 
-	from, to := s.From, s.To
-	if s.Audio {
-		if from, to, err = quietCuts(ctx, s); err != nil {
-			return err
-		}
-	}
-
+	c := b.cuts[i]
 	var cut []string
-	if from > 0 {
-		cut = append(cut, "-ss", ftoa(from))
+	if c.from > 0 {
+		cut = append(cut, "-ss", ftoa(c.from))
 	}
-	if to > 0 {
-		cut = append(cut, "-to", ftoa(to))
-	}
+	cut = append(cut, "-to", ftoa(c.to))
 
 	// Pass 1: only frames where something changed, back to back
 	vf := b.fit
@@ -965,16 +1039,12 @@ func (b *builder) report(ctx context.Context, video string,
 	}
 	fmt.Printf("built in %s\n", took.Round(100*time.Millisecond))
 
-	var ids []string
+	var lines []spoken
 	for _, scene := range b.speech {
-		for _, sp := range scene {
-			ids = append(ids, sp.GenID)
-		}
+		lines = append(lines, scene...)
 	}
-	if b.key != "" {
-		if usd, err := totalCost(ctx, b.key, ids); err == nil {
-			fmt.Printf("tts $%.4f\n", usd)
-		}
+	if len(lines) > 0 {
+		fmt.Println(billOf(ctx, b.key, lines))
 	}
 }
 

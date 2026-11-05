@@ -5,9 +5,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 const usageText = `demo: narrated demo and explainer videos, and speech
@@ -62,4 +65,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// signalContext is a command's context: canceled on SIGINT or SIGTERM,
+// so what it spawns is killed (CommandContext) and its defers run (work
+// dirs go) instead of everything being orphaned. A second signal kills
+// as usual once stop is called.
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt,
+		syscall.SIGTERM)
 }

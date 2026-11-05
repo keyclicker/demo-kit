@@ -6,9 +6,10 @@ import (
 	"slices"
 )
 
-// Zoom points a recording at what its narration talks about: a step's
-// zoom [x, y, w, h] (the clip's pixels) fills the frame while it's
-// said, eased in at the step's cut; a step without one shows it all.
+// Zoom points a picture at what its narration talks about: a step's
+// zoom [x, y, w, h] (a clip's or an image's pixels) fills the frame
+// while it's said, eased in at the step's cut; a step without one
+// shows it all.
 //
 // ffmpeg's perspective filter does it, sub-pixel, with corners that
 // move per frame. Not crop: it sizes itself to the first frame, so it
@@ -17,7 +18,7 @@ import (
 
 const (
 	zoomSecs = 0.5 // a zoom eases this long
-	maxZoom  = 4.0 // past it a recording is mush: smaller regions grow
+	maxZoom  = 4.0 // past it a picture is mush: smaller regions grow
 )
 
 // rect is a region of the frame, in frame pixels.
@@ -26,12 +27,10 @@ type rect struct{ x, y, w, h float64 }
 // fullFrame is the whole frame: no zoom.
 var fullFrame = rect{0, 0, frameW, frameH}
 
-// clipViews is what each of a clip's steps shows (zoomRect), nil when
-// no step zooms.
+// clipViews is what each of a clip's steps shows, nil when no step
+// zooms.
 func clipViews(ctx context.Context, s Scene) ([]rect, error) {
-	if !slices.ContainsFunc(s.Steps, func(st Step) bool {
-		return st.Zoom != nil
-	}) {
+	if !hasZoom(s.Steps) {
 		return nil, nil
 	}
 
@@ -42,36 +41,38 @@ func clipViews(ctx context.Context, s Scene) ([]rect, error) {
 
 	var views []rect
 	for k, st := range s.Steps {
-		v, err := zoomRect(st.Zoom, w, h)
-		if err != nil {
-			return nil, fmt.Errorf("step %d: %w", k+1, err)
+		v := fullFrame
+		if st.Zoom != nil {
+			r, err := fitRegion(st.Zoom, w, h)
+			if err != nil {
+				return nil, fmt.Errorf("step %d: %w", k+1, err)
+			}
+			v = zoomView(r)
 		}
 		views = append(views, v)
 	}
 	return views, nil
 }
 
-// zoomRect is the frame region a step's zoom shows: the clip's region
-// (src pixels, srcW x srcH) mapped through the fit into the frame,
-// grown to the frame's shape around its center, at most maxZoom in,
-// and kept inside the frame. No zoom: the whole frame.
-func zoomRect(zoom []int, srcW, srcH int) (rect, error) {
-	if zoom == nil {
-		return fullFrame, nil
-	}
-	if zoom[0]+zoom[2] > srcW || zoom[1]+zoom[3] > srcH {
-		return rect{}, fmt.Errorf("zoom %v: outside the clip (%dx%d)", zoom,
+// fitRegion maps a clip's region (its pixels, srcW x srcH) through the
+// fit (fitFilter: scaled into the frame, centered) into the frame.
+func fitRegion(box []int, srcW, srcH int) (rect, error) {
+	if box[0]+box[2] > srcW || box[1]+box[3] > srcH {
+		return rect{}, fmt.Errorf("zoom %v: outside the clip (%dx%d)", box,
 			srcW, srcH)
 	}
 
-	// The fit: scaled into the frame, centered (fitFilter)
 	s := min(frameW/float64(srcW), frameH/float64(srcH))
 	ox := (frameW - float64(srcW)*s) / 2
 	oy := (frameH - float64(srcH)*s) / 2
-	r := rect{ox + float64(zoom[0])*s, oy + float64(zoom[1])*s,
-		float64(zoom[2]) * s, float64(zoom[3]) * s}
+	return rect{ox + float64(box[0])*s, oy + float64(box[1])*s,
+		float64(box[2]) * s, float64(box[3]) * s}, nil
+}
 
-	// The frame's shape, never closer than maxZoom
+// zoomView is the view that shows frame region r: r grown to the
+// frame's shape around its center, at most maxZoom in, kept inside
+// the frame.
+func zoomView(r rect) rect {
 	const aspect = float64(frameW) / frameH
 	w := min(max(r.w, r.h*aspect, frameW/maxZoom), frameW)
 	h := w / aspect
@@ -81,7 +82,14 @@ func zoomRect(zoom []int, srcW, srcH int) (rect, error) {
 		x: min(max(cx-w/2, 0), frameW-w),
 		y: min(max(cy-h/2, 0), frameH-h),
 		w: w, h: h,
-	}, nil
+	}
+}
+
+// hasZoom reports whether any of steps zooms.
+func hasZoom(steps []Step) bool {
+	return slices.ContainsFunc(steps, func(st Step) bool {
+		return st.Zoom != nil
+	})
 }
 
 // zoomFilter is ffmpeg's perspective filter that shows views[k] from

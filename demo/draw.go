@@ -15,11 +15,15 @@ import (
 	"io"
 	"math"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
+	"unicode"
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
+	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 	_ "golang.org/x/image/webp"
 )
@@ -151,6 +155,47 @@ func clip(s string, n int) string {
 	return string(runes[:n-1]) + "…"
 }
 
+// maxGlyphsNamed caps how many missing characters a warning names.
+const maxGlyphsNamed = 8
+
+// warnGlyphs warns, on w, of the characters in texts JetBrains Mono
+// has no glyph for (emoji, CJK): each draws as a box. where names the
+// part, e.g. "scene 3". Control characters aside: they're never drawn.
+func warnGlyphs(w io.Writer, where string, texts []string) {
+	mono := monoFonts()[0]
+	var buf sfnt.Buffer
+	seen := map[rune]bool{}
+	var missing []string
+
+	for _, t := range texts {
+		for _, r := range t {
+			if seen[r] || unicode.IsControl(r) {
+				continue
+			}
+			seen[r] = true
+
+			// Glyph 0 is .notdef: the box
+			if i, err := mono.GlyphIndex(&buf, r); err == nil && i == 0 {
+				missing = append(missing, strconv.Quote(string(r)))
+			}
+		}
+	}
+
+	switch n := len(missing); {
+	case n == 0:
+		return
+	case n > maxGlyphsNamed:
+		missing = append(missing[:maxGlyphsNamed],
+			fmt.Sprintf("%d more", n-maxGlyphsNamed))
+	}
+	what := "it draws as a box"
+	if len(missing) > 1 {
+		what = "they draw as boxes"
+	}
+	fmt.Fprintf(w, "demo: %s: no glyph for %s: %s\n", where,
+		strings.Join(missing, ", "), what)
+}
+
 // ---- Images ----
 
 // loadImage decodes a PNG, JPEG, GIF (its first frame) or WebP.
@@ -203,13 +248,11 @@ func savePNG(img image.Image, path string) error {
 // ---- Shots ----
 
 // shot is a drawn picture held for n frames: the frame-high view of
-// img at y1, eased there from y0 over move frames (smoothstep) when
-// they differ. img is frameW wide and at least frameH tall.
+// img at y. img is frameW wide and at least frameH tall.
 type shot struct {
-	img    *image.RGBA
-	y0, y1 int
-	move   int
-	n      int
+	img *image.RGBA
+	y   int
+	n   int
 }
 
 // shots produces a scene's shots in order, one at a time, so a scene
@@ -217,30 +260,15 @@ type shot struct {
 type shots func(emit func(shot) error) error
 
 // still is one picture for n frames: a view of its top if it fits, else
-// pages, or with smooth one eased pan top to bottom between holds.
-func still(img *image.RGBA, n int, smooth bool) shots {
+// its pages in turn.
+func still(img *image.RGBA, n int) shots {
 	return func(emit func(shot) error) error {
 		tall := img.Bounds().Dy()
-		if tall == frameH {
-			return emit(shot{img: img, n: n})
-		}
-
-		bottom := tall - frameH
-		if smooth {
-			hold := min(fps, n/4)
-			if err := emit(shot{img: img, n: hold}); err != nil {
-				return err
-			}
-			return emit(shot{img: img, y1: bottom, move: n - 2*hold,
-				n: n - hold})
-		}
-
 		pages := pageCount(tall)
 		for k := range pages {
-			y := min(k*pageStep, bottom)
+			y := min(k*pageStep, tall-frameH)
 			start, end := n*k/pages, n*(k+1)/pages
-			if err := emit(shot{img: img, y0: y, y1: y,
-				n: end - start}); err != nil {
+			if err := emit(shot{img: img, y: y, n: end - start}); err != nil {
 				return err
 			}
 		}
@@ -262,39 +290,28 @@ type stepView struct {
 }
 
 // stepShots is one shot per step, cut at the scene's step cuts (in
-// frames), each from view(k); with smooth, a view eases to its y.
-func stepShots(cuts []int, n int, smooth bool,
+// frames), each from view(k).
+func stepShots(cuts []int, n int,
 	view func(k int) (stepView, error)) shots {
 
 	return func(emit func(shot) error) error {
-		prev := -1
+		y := 0
 		for k := range cuts {
 			v, err := view(k)
 			if err != nil {
 				return fmt.Errorf("step %d: %w", k+1, err)
 			}
-
-			y := v.y
-			if y < 0 {
-				y = max(prev, 0)
-			}
-			if prev < 0 {
-				prev = y
+			if v.y >= 0 {
+				y = v.y
 			}
 
 			end := n
 			if k+1 < len(cuts) {
 				end = cuts[k+1]
 			}
-
-			s := shot{img: v.img, y0: y, y1: y, n: end - cuts[k]}
-			if smooth {
-				s.y0, s.move = prev, frameCount(scrollSecs)
-			}
-			if err := emit(s); err != nil {
+			if err := emit(shot{img: v.img, y: y, n: end - cuts[k]}); err != nil {
 				return err
 			}
-			prev = y
 		}
 		return nil
 	}
@@ -310,10 +327,10 @@ func centerY(top, bottom, tall int) int {
 	return min(max(y, 0), tall-frameH)
 }
 
-// drawnVideo streams shots to ffmpeg as exactly n raw frames: the last
-// shot is held or cut to fit.
+// drawnVideo streams shots to ffmpeg as exactly n raw frames, through
+// filter vf: the last shot is held or cut to fit.
 func (b *builder) drawnVideo(ctx context.Context, n int, shots shots,
-	out string) error {
+	vf, out string) error {
 
 	r, w := io.Pipe()
 	done := make(chan error, 1)
@@ -322,7 +339,7 @@ func (b *builder) drawnVideo(ctx context.Context, n int, shots shots,
 			"-f", "rawvideo", "-pix_fmt", "rgba",
 			"-s", fmt.Sprintf("%dx%d", frameW, frameH),
 			"-framerate", fmt.Sprint(fps), "-i", "pipe:0",
-			"-vf", b.fit}, append(b.codec, out)...)...)
+			"-vf", vf}, append(b.codec, out)...)...)
 		r.CloseWithError(firstErr(err, io.ErrClosedPipe)) // unblock the writer
 		done <- err
 	}()
@@ -330,11 +347,11 @@ func (b *builder) drawnVideo(ctx context.Context, n int, shots shots,
 	written := 0
 	var last []byte
 	err := shots(func(s shot) error {
-		for f := range s.n {
+		for range s.n {
 			if written == n {
 				return nil
 			}
-			last = view(s, f)
+			last = view(s)
 			if _, err := w.Write(last); err != nil {
 				return err
 			}
@@ -359,17 +376,11 @@ func (b *builder) drawnVideo(ctx context.Context, n int, shots shots,
 	return err
 }
 
-// view is frame f of s: its view's rows, straight out of the picture
-// (a frameW-wide RGBA's rows are contiguous).
-func view(s shot, f int) []byte {
-	y := s.y1
-	if s.y0 != s.y1 && f < s.move {
-		t := float64(f) / float64(s.move)
-		y = s.y0 + int(math.Round(float64(s.y1-s.y0)*t*t*(3-2*t)))
-	}
-
+// view is s's frame: its view's rows, straight out of the picture (a
+// frameW-wide RGBA's rows are contiguous).
+func view(s shot) []byte {
 	stride := s.img.Stride
-	return s.img.Pix[y*stride : (y+frameH)*stride]
+	return s.img.Pix[s.y*stride : (s.y+frameH)*stride]
 }
 
 // firstErr is the first of its arguments that isn't nil.

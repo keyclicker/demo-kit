@@ -58,7 +58,22 @@ func probeDuration(ctx context.Context, path string) (float64, error) {
 		return 0, fmt.Errorf("ffprobe %s: %w", path, err)
 	}
 
-	return strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	secs, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: no duration (empty?)", path)
+	}
+	return secs, nil
+}
+
+// hasAudio reports whether a media file has a sound stream.
+func hasAudio(ctx context.Context, path string) (bool, error) {
+	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error",
+		"-select_streams", "a", "-show_entries", "stream=index",
+		"-of", "csv=p=0", path).Output()
+	if err != nil {
+		return false, fmt.Errorf("ffprobe %s: %w", path, err)
+	}
+	return strings.TrimSpace(string(out)) != "", nil
 }
 
 // probeSize is a video's (first video stream's) frame size.

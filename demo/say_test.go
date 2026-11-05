@@ -1,9 +1,16 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestReadText(t *testing.T) {
@@ -71,5 +78,100 @@ func TestCheckVoice(t *testing.T) {
 	// Other models' names aren't known here: they pass
 	if err := checkVoice(Voice{Model: "x/kokoro", Name: "am_michael"}); err != nil {
 		t.Errorf("kokoro: %v", err)
+	}
+}
+
+// A synthesized line leaves a receipt; saying it again is a cache hit
+func TestSpeakWritesReceipt(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("no ffmpeg")
+	}
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Generation-Id", "gen-1")
+			w.Header().Set("Content-Type", "audio/pcm;rate=24000")
+			w.Write(make([]byte, 4800)) // 0.1 s of silence
+		}))
+	defer srv.Close()
+	apiBase = srv.URL
+
+	ctx := context.Background()
+	sp, err := speak(ctx, "k", defaultVoice, "hi")
+	if err != nil || !sp.New {
+		t.Fatalf("first: %+v %v", sp, err)
+	}
+	r, ok, err := readReceipt(sp.Wav)
+	if err != nil || !ok || r.GenID != "gen-1" || r.USD != nil {
+		t.Fatalf("receipt: %+v %v %v", r, ok, err)
+	}
+
+	if again, err := speak(ctx, "k", defaultVoice, "hi"); err != nil ||
+		again.New || again.Wav != sp.Wav {
+		t.Fatalf("again: %+v %v", again, err)
+	}
+}
+
+// The bill counts new and cached lines apart, each distinct line once,
+// prices a receipt once, and leaves failed lookups unpriced
+func TestBillOf(t *testing.T) {
+	dir := t.TempDir()
+	lookups := map[string]int{}
+	var mu sync.Mutex
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			id := r.URL.Query().Get("id")
+			mu.Lock()
+			lookups[id]++
+			mu.Unlock()
+			if id == "gen-new" {
+				w.Write([]byte(`{"data":{"total_cost":0.002}}`))
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+	defer srv.Close()
+	apiBase = srv.URL
+	defer func(wait time.Duration) { priceWait = wait }(priceWait)
+	priceWait = 0
+
+	line := func(name string, r *receipt) string {
+		wav := filepath.Join(dir, name+".wav")
+		os.WriteFile(wav, nil, 0o644)
+		if r != nil {
+			if err := writeReceipt(wav, *r); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return wav
+	}
+	fresh := line("fresh", &receipt{GenID: "gen-new"})
+	priced := line("priced", &receipt{GenID: "gen-old", USD: new(0.003)})
+	old := line("old", nil)
+	lost := line("lost", &receipt{GenID: "gen-lost"})
+
+	ctx := context.Background()
+	bill := billOf(ctx, "k", []spoken{{Wav: fresh, New: true},
+		{Wav: fresh}, {Wav: priced}, {Wav: old}, {Wav: lost}})
+
+	want := speechBill{New: 1, NewUSD: 0.002, Cached: 3, CachedUSD: 0.003,
+		Unpriced: 2}
+	if bill != want {
+		t.Fatalf("bill %+v, want %+v", bill, want)
+	}
+	if s := bill.String(); s != "tts $0.0020 new (1 line), "+
+		"3 cached ($0.0030), 2 unpriced" {
+		t.Fatalf("String: %q", s)
+	}
+
+	// The price is kept: the next build asks nothing
+	if r, _, _ := readReceipt(fresh); r.USD == nil || *r.USD != 0.002 {
+		t.Fatalf("receipt not priced: %+v", r)
+	}
+	billOf(ctx, "k", []spoken{{Wav: fresh}, {Wav: priced}})
+	if lookups["gen-new"] != 1 || lookups["gen-old"] != 0 {
+		t.Fatalf("lookups: %v", lookups)
 	}
 }

@@ -3,9 +3,14 @@ package main
 import (
 	"context"
 	"image"
+	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // collect runs shots and returns what they emitted.
@@ -33,57 +38,43 @@ func total(shots []shot) int {
 
 func TestStill(t *testing.T) {
 	// Fits: one shot. Taller: pages, flush with the bottom at the end
-	if got := collect(t, still(newCanvas(frameH), 90, false)); len(got) != 1 {
+	if got := collect(t, still(newCanvas(frameH), 90)); len(got) != 1 {
 		t.Fatalf("one frame: %d shots", len(got))
 	}
 
 	tall := newCanvas(frameH + pageStep + 1)
-	pages := collect(t, still(tall, 91, false))
+	pages := collect(t, still(tall, 91))
 	if len(pages) != 3 || total(pages) != 91 {
 		t.Fatalf("pages: %d shots, %d frames", len(pages), total(pages))
 	}
-	if last := pages[2]; last.y1 != pageStep+1 {
-		t.Fatalf("last page at %d", last.y1)
-	}
-
-	// Smooth: hold, then one pan to the bottom
-	pan := collect(t, still(tall, 120, true))
-	if len(pan) != 2 || total(pan) != 120 || pan[1].y1 != pageStep+1 ||
-		pan[1].move != 120-2*fps {
-		t.Fatalf("pan: %+v", pan)
+	if last := pages[2]; last.y != pageStep+1 {
+		t.Fatalf("last page at %d", last.y)
 	}
 }
 
 func TestStepShots(t *testing.T) {
 	img := newCanvas(3 * frameH)
 	ys := []int{500, -1, 100}
-	got := collect(t, stepShots([]int{0, 30, 50}, 80, true,
+	got := collect(t, stepShots([]int{0, 30, 50}, 80,
 		func(k int) (stepView, error) { return stepView{img, ys[k]}, nil }))
 
 	if len(got) != 3 || total(got) != 80 || got[0].n != 30 {
 		t.Fatalf("shots: %+v", got)
 	}
-	// No y: stay; smooth: ease from the last view
-	if got[0].y0 != 500 || got[1].y1 != 500 || got[2].y0 != 500 ||
-		got[2].y1 != 100 || got[2].move != frameCount(scrollSecs) {
+	// No y: stay where the last step was
+	if got[0].y != 500 || got[1].y != 500 || got[2].y != 100 {
 		t.Fatalf("views: %+v", got)
 	}
 }
 
 func TestView(t *testing.T) {
 	img := newCanvas(2 * frameH)
-	s := shot{img: img, y0: 0, y1: 100, move: 10, n: 20}
-
-	top := func(f int) int {
-		b := view(s, f)
-		return (len(img.Pix) - cap(b)) / img.Stride // rows above the view
-	}
-	if len(view(s, 0)) != frameW*frameH*4 {
+	b := view(shot{img: img, y: 100, n: 20})
+	if len(b) != frameW*frameH*4 {
 		t.Fatal("a view isn't one frame")
 	}
-	// Eases from y0 to y1, then holds
-	if top(0) != 0 || top(5) != 50 || top(10) != 100 || top(19) != 100 {
-		t.Fatalf("eased: %d %d %d %d", top(0), top(5), top(10), top(19))
+	if top := (len(img.Pix) - cap(b)) / img.Stride; top != 100 {
+		t.Fatalf("view at row %d", top)
 	}
 }
 
@@ -93,11 +84,20 @@ func TestSpotlight(t *testing.T) {
 		scale: 2}
 	fill(p.canvas, 0, 0, frameW, frameH, colText)
 
-	v, err := p.point(Step{Box: []int{10, 10, 100, 50}})
-	if err != nil || v.img == p.canvas || v.y != 0 {
-		t.Fatalf("spotlight: %v %v", v.y, err)
+	point := func(st Step) (aim, stepView) {
+		t.Helper()
+		a, err := p.aim(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a, p.point(a)
 	}
-	if _, err := p.point(Step{Box: []int{600, 0, 100, 50}}); err == nil {
+
+	a, v := point(Step{Box: []int{10, 10, 100, 50}})
+	if v.img == p.canvas || v.y != 0 || a.view != fullFrame {
+		t.Fatalf("spotlight: y %d, view %+v", v.y, a.view)
+	}
+	if _, err := p.aim(Step{Box: []int{600, 0, 100, 50}}); err == nil {
 		t.Fatal("box outside the image: accepted")
 	}
 
@@ -110,26 +110,23 @@ func TestSpotlight(t *testing.T) {
 	}
 
 	// A box at the edge keeps its whole outline, inside the picture
-	v, _ = p.point(Step{Box: []int{0, 0, 100, 50}})
-	if c := v.img.RGBAAt(0, 40); c != colFocus {
+	_, v = point(Step{Box: []int{0, 0, 100, 50}})
+	if c := v.img.RGBAAt(0, 40); c != colFocus || v.img.RGBAAt(2, 40) !=
+		colFocus {
 		t.Fatalf("left outline at the edge: %v", c)
 	}
 
-	// An arrow: its tip just off the spot, no fade
-	v, err = p.point(Step{Arrow: []int{320, 240}})
-	if err != nil || v.img.RGBAAt(640+12, 480+12) != colFocus ||
-		v.img.RGBAAt(640, 480) != colText {
-		t.Fatalf("arrow: %v %v", v.img.RGBAAt(652, 492), err)
+	// A zoom alone: the picture plain, a small region up to maxZoom
+	a, v = point(Step{Zoom: []int{0, 0, 100, 50}})
+	if v.img != p.canvas || a.view != (rect{0, 0, frameW / maxZoom,
+		frameH / maxZoom}) {
+		t.Fatalf("zoom alone: %+v", a.view)
 	}
-	if c := v.img.RGBAAt(100, 900); c != colText {
-		t.Fatalf("arrow faded: %v", c)
-	}
-	// At a corner it clips, never writes past the picture
-	if _, err := p.point(Step{Arrow: []int{640, 480}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.point(Step{Arrow: []int{700, 10}}); err == nil {
-		t.Fatal("arrow outside the image: accepted")
+
+	// Both: the outline thinner by the zoom, so it's as thick on screen
+	_, v = point(Step{Box: []int{0, 0, 100, 50}, Zoom: []int{0, 0, 100, 50}})
+	if c := v.img.RGBAAt(1, 40); c == colFocus {
+		t.Fatal("outline not thinned for a 4x zoom")
 	}
 }
 
@@ -156,6 +153,12 @@ func TestSlideCheck(t *testing.T) {
 	long := SlideSpec{End: "x", Lines: lines}
 	if err := long.check(); err == nil {
 		t.Fatal("overfull slide: accepted")
+	}
+
+	// One word wider than the frame doesn't wrap: it's rejected too
+	wide := SlideSpec{Callout: "github.com/keyclicker/demo-kit"}
+	if err := wide.check(); err == nil {
+		t.Fatal("too wide slide: accepted")
 	}
 }
 
@@ -185,6 +188,20 @@ func TestParseANSI(t *testing.T) {
 	if lines[2][0].text != "        x" || lines[2][1].col != color256(196) {
 		t.Fatalf("tab, 256 colors: %+v", lines[2])
 	}
+
+	// A program's own CRLF reaches us as \r\r\n (the pty's onlcr)
+	lines = parseANSI("HTTP/1.1 200 OK\r\r\nX: y\r\r\n")
+	var texts []string
+	for _, l := range lines {
+		var text string
+		for _, r := range l {
+			text += r.text
+		}
+		texts = append(texts, text)
+	}
+	if !slices.Equal(texts, []string{"HTTP/1.1 200 OK", "X: y"}) {
+		t.Fatalf("CRLF: %q", texts)
+	}
 }
 
 func TestPrefixRuns(t *testing.T) {
@@ -211,5 +228,78 @@ func TestRunTerm(t *testing.T) {
 	// One shell: cd sticks; stderr shows; statuses kept
 	if len(got) != 3 || got[1].Output != "/\r\nhi\r\n" || got[2].Status != 1 {
 		t.Fatalf("results: %+v", got)
+	}
+}
+
+func TestRunTermMarkerBytes(t *testing.T) {
+	// Output with the markers' control bytes can't split a session
+	spec := TermSpec{Run: []string{`printf 'a\x1eb\x1fc\n'`, "echo two"},
+		Dir: t.TempDir()}
+	got, err := runTerm(context.Background(), spec,
+		filepath.Join(t.TempDir(), "term.sh"))
+	if err != nil || len(got) != 2 || got[1].Output != "two\r\n" {
+		t.Fatalf("%+v, %v", got, err)
+	}
+}
+
+func TestRunTermCanceled(t *testing.T) {
+	// A canceled build takes the session's commands down with it
+	dir := t.TempDir()
+	spec := TermSpec{Run: []string{`sh -c 'echo $$ > pid; exec sleep 300'`},
+		Dir: dir}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if _, err := runTerm(ctx, spec, filepath.Join(dir, "term.sh")); err == nil {
+		t.Fatal("canceled session: no error")
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	for range 30 {
+		if syscall.Kill(pid, 0) != nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	syscall.Kill(pid, syscall.SIGKILL)
+	t.Fatalf("pid %d still running", pid)
+}
+
+func TestRunSessionsInOrder(t *testing.T) {
+	// Scene 2 reads what scene 1 makes, however slowly
+	dir := t.TempDir()
+	scenes := []Scene{
+		{Term: &TermSpec{Run: []string{"sleep 0.5; echo made > f"},
+			Dir: dir}, Secs: 1, num: 1},
+		{Term: &TermSpec{Run: []string{"cat f"}, Dir: dir}, Secs: 1, num: 2},
+	}
+	b := newBuilder(&Script{Scenes: scenes}, t.TempDir(), true)
+
+	if err := b.runSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.sessions[1].results[0]; got.Status != 0 ||
+		got.Output != "made\r\n" {
+		t.Fatalf("scene 2: %+v", got)
+	}
+}
+
+// Characters the font lacks are named once; the rest pass quietly
+func TestWarnGlyphs(t *testing.T) {
+	var out strings.Builder
+	warnGlyphs(&out, "scene 3", []string{"sound 🔊 on", "🔊\r│ café"})
+	want := `demo: scene 3: no glyph for "🔊": it draws as a box` + "\n"
+	if out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+
+	out.Reset()
+	warnGlyphs(&out, "code", []string{"plain ├── ascii…"})
+	if out.Len() != 0 {
+		t.Fatalf("warned on drawable text: %q", out.String())
 	}
 }

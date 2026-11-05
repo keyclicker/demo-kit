@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -70,5 +71,40 @@ func TestTreeSpecCheck(t *testing.T) {
 	}
 	if (CodeSpec{Tree: "a", Depth: 2}).check() != nil {
 		t.Error("rejected a plain tree")
+	}
+}
+
+// Outside git, a symlinked dir is walked where it points
+func TestReadTreeSymlink(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "real", "sub"), 0o755)
+	os.WriteFile(filepath.Join(dir, "real", "sub", "a.go"), nil, 0o644)
+	os.Symlink("real", filepath.Join(dir, "link"))
+
+	l, err := readTree(context.Background(), filepath.Join(dir, "link"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := l.Files[0].Status; s != "1 file" {
+		t.Fatalf("status %q, want the target's 1 file", s)
+	}
+}
+
+// A directory git ignores is walked: git lists nothing in it
+func TestReadTreeIgnoredDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := exec.Command("git", "-C", dir, "init", "-q").Run(); err != nil {
+		t.Skip("no git")
+	}
+	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("build/\n"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "build", "x"), 0o755)
+	os.WriteFile(filepath.Join(dir, "build", "x", "out.o"), nil, 0o644)
+
+	l, err := readTree(context.Background(), filepath.Join(dir, "build"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := l.Files[0].Status; s != "1 file" {
+		t.Fatalf("status %q", s)
 	}
 }

@@ -33,9 +33,10 @@ import (
 // listing is what gets drawn: one or more files of numbered lines.
 type listing struct {
 	Files []*codeFile
-	Diff  bool // +/- markers, hunk headers, stats
-	Split bool // a diff side by side: old left, new right
-	Tree  bool // a file tree (tree.go), colored by entry kind
+	Diff  bool   // +/- markers, hunk headers, stats
+	Split bool   // a diff side by side: old left, new right
+	Tree  bool   // a file tree (tree.go), colored by entry kind
+	Align string // where a short one sits (lift)
 }
 
 // codeFile is one file: of a diff, or a plain source excerpt (one
@@ -80,13 +81,13 @@ type CodeSpec struct {
 	Depth   int      `json:"depth,omitempty"` // tree depth, default 3
 	Hunks   []int    `json:"hunks,omitempty"`
 	Lines   []int    `json:"lines,omitempty"`
-	Context int      `json:"context,omitempty"` // diff context, default 3
-
-	// Scroll is how the view moves: "" cuts (default), "smooth" eases
-	Scroll string `json:"scroll,omitempty"`
+	Context *int     `json:"context,omitempty"` // diff context, default 3
 
 	// Split shows a diff side by side, old left and new right
 	Split bool `json:"split,omitempty"`
+
+	// Align places a short listing: "center" (default) or "top"
+	Align string `json:"align,omitempty"`
 }
 
 // check rejects specs with no source, two, or a bad range.
@@ -102,9 +103,11 @@ func (c CodeSpec) check() error {
 		return fmt.Errorf("code: split needs a diff")
 	case c.Tree == "" && c.Depth != 0, c.Depth < 0:
 		return fmt.Errorf("code: depth needs a tree, and to be positive")
-	case c.Scroll != "" && c.Scroll != "smooth":
-		return fmt.Errorf(`code: scroll %q: want "smooth" or nothing`,
-			c.Scroll)
+	case c.Context != nil && (c.Diff == nil || *c.Context < 0):
+		return fmt.Errorf("code: context needs a diff, and to be 0 or more")
+	}
+	if err := checkAlign(c.Align); err != nil {
+		return err
 	}
 	return checkRange("code lines", c.Lines)
 }
@@ -141,7 +144,23 @@ func (c CodeSpec) load(ctx context.Context) (*listing, error) {
 	if len(l.Files) == 0 {
 		return nil, fmt.Errorf("code: nothing to show")
 	}
+	l.Align = c.Align
 	return l, nil
+}
+
+// texts is every text the listing shows: paths, hunk contexts, lines.
+func (l *listing) texts() []string {
+	var out []string
+	for _, f := range l.Files {
+		out = append(out, f.Path)
+		for _, h := range f.Hunks {
+			out = append(out, h.Context)
+			for _, cl := range h.Lines {
+				out = append(out, cl.Text)
+			}
+		}
+	}
+	return out
 }
 
 // readSource lists a whole file as one hunk of context lines.
@@ -175,16 +194,23 @@ func homePath(path string) string {
 	return path
 }
 
+// defaultContext is a diff's context lines when the spec sets none.
+const defaultContext = 3
+
 // readDiff runs `git diff` with spec's args and context, and keeps the
-// picked hunks.
+// picked hunks. Paths come raw and a/, b/-prefixed, whatever the
+// user's git config says.
 func readDiff(ctx context.Context, c CodeSpec) (*listing, error) {
-	if c.Context == 0 {
-		c.Context = 3
+	unified := defaultContext
+	if c.Context != nil {
+		unified = *c.Context
 	}
 
-	cmd := exec.CommandContext(ctx, "git", append([]string{"diff",
+	cmd := exec.CommandContext(ctx, "git", append([]string{
+		"-c", "core.quotePath=false", "diff",
 		"--no-color", "--no-ext-diff", "--find-renames",
-		fmt.Sprintf("-U%d", c.Context)}, c.Diff...)...)
+		"--src-prefix=a/", "--dst-prefix=b/",
+		fmt.Sprintf("-U%d", unified)}, c.Diff...)...)
 	cmd.Stderr = os.Stderr
 
 	out, err := cmd.Output()
@@ -271,13 +297,13 @@ func parseDiff(text string) ([]*codeFile, error) {
 			file.Status = "deleted"
 		case strings.HasPrefix(line, "rename to "):
 			file.Status = "renamed"
-			file.Path = strings.TrimPrefix(line, "rename to ")
+			file.Path = unquotePath(strings.TrimPrefix(line, "rename to "))
 		case strings.HasPrefix(line, "Binary files "):
 			file.Binary = true
 
 		case strings.HasPrefix(line, "+++ "), strings.HasPrefix(line, "--- "):
-			if p := strings.TrimPrefix(line[4:], "b/"); line[0] == '+' &&
-				p != "/dev/null" {
+			p := strings.TrimPrefix(unquotePath(line[4:]), "b/")
+			if line[0] == '+' && p != "/dev/null" {
 				file.Path = p
 			}
 
@@ -291,6 +317,11 @@ func parseDiff(text string) ([]*codeFile, error) {
 			oldN, _ = strconv.Atoi(m[1])
 			newN, _ = strconv.Atoi(m[3])
 			oldLeft, newLeft = hunkCount(m[2]), hunkCount(m[4])
+
+			// No new lines (-U0): git names the line before the removal
+			if newLeft == 0 && newN > 0 {
+				newN++
+			}
 
 			h = &hunk{Index: index, OldStart: oldN, NewStart: newN,
 				Context: strings.TrimSpace(m[5])}
@@ -310,13 +341,30 @@ func hunkCount(s string) int {
 	return n
 }
 
-// gitPath takes the b/ side of "diff --git a/X b/X".
+// gitPath takes the b/ side of "diff --git a/X b/X", quoted or not.
 func gitPath(line string) string {
 	rest := strings.TrimPrefix(line, "diff --git ")
+	if i := strings.LastIndex(rest, ` "b/`); i >= 0 &&
+		strings.HasSuffix(rest, `"`) {
+		return strings.TrimPrefix(unquotePath(rest[i+1:]), "b/")
+	}
 	if i := strings.LastIndex(rest, " b/"); i >= 0 {
 		return rest[i+3:]
 	}
 	return rest
+}
+
+// unquotePath reads a path git quoted C-style ("a\"b", "\303\251"):
+// with core.quotePath off, still those with quotes, backslashes or
+// control characters. Other paths come back as they are.
+func unquotePath(s string) string {
+	if !strings.HasPrefix(s, `"`) {
+		return s
+	}
+	if p, err := strconv.Unquote(s); err == nil {
+		return p
+	}
+	return s
 }
 
 // ---- Selection ----
@@ -420,6 +468,12 @@ type metrics struct {
 var (
 	unifiedMetrics = metrics{fontSize: 20, rowH: 28, margin: margin}
 	splitMetrics   = metrics{fontSize: 15, rowH: 22, margin: 12}
+
+	// Bigger sizes for listings that fit a frame with room to spare
+	largeMetrics = []metrics{
+		{fontSize: 30, rowH: 42, margin: margin},
+		{fontSize: 25, rowH: 35, margin: margin},
+	}
 )
 
 // render is a drawn listing: the image, and where each line landed.
@@ -462,22 +516,21 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 			"the diff to a path, or pick hunks", len(l.Files))
 	}
 
-	m := unifiedMetrics
+	// A split keeps its size; else the largest that fits one frame
+	// and wraps no more lines than the default, or the default, paged
+	var p *painter
 	if l.Split {
-		m = splitMetrics
-	}
-
-	regular := monoFace(false, m.fontSize)
-	p := &painter{listing: l, face: regular, bold: monoFace(true, m.fontSize),
-		hl: hl, rowH: m.rowH, marked: map[string]bool{}}
-	p.adv = font.MeasureString(regular, "M").Round()
-
-	if l.Split {
-		half := frameW / 2
-		p.panes = []pane{p.newPane(0, half, m.margin, true),
-			p.newPane(half, half, m.margin, false)}
+		p = newPainter(l, hl, splitMetrics)
 	} else {
-		p.panes = []pane{p.newPane(0, frameW, m.margin, false)}
+		p = newPainter(l, hl, unifiedMetrics)
+		p.layout(nil)
+		for _, m := range largeMetrics {
+			big := newPainter(l, hl, m)
+			if big.layout(nil) <= frameH && big.wraps <= p.wraps {
+				p = big
+				break
+			}
+		}
 	}
 
 	// ---- Measure, then draw ----
@@ -487,6 +540,7 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 		return nil, fmt.Errorf("%d px tall, over %d: narrow it with "+
 			"lines or hunks", height, maxDrawH)
 	}
+	p.top = lift(frameH-height, l.Align) // a short one: under its header
 	p.img = newCanvas(height)
 	p.rows = map[int][2]int{}
 	p.layout(p.img)
@@ -502,6 +556,24 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 	}
 
 	return &render{Img: p.img, rows: p.rows}, nil
+}
+
+// newPainter sets a painter up to draw l with hl at m's size: one pane,
+// or a split's two.
+func newPainter(l *listing, hl highlight, m metrics) *painter {
+	regular := monoFace(false, m.fontSize)
+	p := &painter{listing: l, face: regular, bold: monoFace(true, m.fontSize),
+		hl: hl, rowH: m.rowH, marked: map[string]bool{}}
+	p.adv = font.MeasureString(regular, "M").Round()
+
+	if l.Split {
+		half := frameW / 2
+		p.panes = []pane{p.newPane(0, half, m.margin, true),
+			p.newPane(half, half, m.margin, false)}
+	} else {
+		p.panes = []pane{p.newPane(0, frameW, m.margin, false)}
+	}
+	return p
 }
 
 // anyIn reports whether a drawn line sits in [from, to].
@@ -541,6 +613,8 @@ type painter struct {
 	adv   int // one column, px
 	rowH  int
 	panes []pane
+	top   int // px between the first header and its code (lift)
+	wraps int // rows past a line's first, counted by layout
 
 	img  *image.RGBA
 	rows map[int][2]int
@@ -550,12 +624,16 @@ type painter struct {
 // the total height.
 func (p *painter) layout(img *image.RGBA) int {
 	y := margin
+	p.wraps = 0
 
-	for _, f := range p.listing.Files {
+	for i, f := range p.listing.Files {
 		if img != nil {
 			p.fileHeader(img, y, f)
 		}
 		y += fileRowH
+		if i == 0 {
+			y += p.top // the header stays on top, the code moves
+		}
 
 		if f.Binary {
 			if img != nil {
@@ -643,6 +721,7 @@ func (p *painter) row(img *image.RGBA, y int, h *hunk, runs [][]run,
 		if li >= 0 {
 			wrapped[k] = wrapTokens(runs[li], p.panes[k].cols)
 			height = max(height, p.rowH*len(wrapped[k]))
+			p.wraps += len(wrapped[k]) - 1
 		}
 	}
 
@@ -808,6 +887,31 @@ func (p *painter) markCells(img *image.RGBA, pn pane, y, from, to int) {
 	}
 }
 
+// ---- Placement ----
+
+// A listing shorter than the frame keeps its first header on top; the
+// rest sits a third of the free space down (align "center", the
+// optical center: dead center looks sunk), or right under it ("top").
+const alignTop, alignCenter = "top", "center"
+
+// checkAlign accepts "", "top" or "center".
+func checkAlign(align string) error {
+	if align != "" && align != alignTop && align != alignCenter {
+		return fmt.Errorf("code: align %q: want %q or %q", align,
+			alignTop, alignCenter)
+	}
+	return nil
+}
+
+// lift is how far down align puts a listing's body, given the frame's
+// free px.
+func lift(free int, align string) int {
+	if align == alignTop {
+		return 0
+	}
+	return max(0, free) / 3
+}
+
 // ---- Highlighting ----
 
 // run is a stretch of text in one color.
@@ -939,6 +1043,8 @@ func cmdCode(args []string) error {
 	picks := fs.String("hunks", "", "diff hunks to keep, e.g. 1,3 (default all)")
 	lines := fs.String("lines", "", "line range to keep, e.g. 120-160")
 	focus := fs.String("focus", "", "line range to highlight, e.g. 130-138")
+	align := fs.String("align", "", `a short listing: "center" (default, `+
+		`a third down) or "top"`)
 	var marks []string
 	fs.Func("mark", "`text` to box inside the focus (repeatable)",
 		func(s string) error { marks = append(marks, s); return nil })
@@ -950,20 +1056,27 @@ func cmdCode(args []string) error {
 			"  e.g. demo code --diff -- origin/master...HEAD -- dir/\n")
 		fs.PrintDefaults()
 	}
-	// Flags first: what follows goes to git as is, -- and all
+	// Flags first: for a diff, what follows goes to git as is, -- and
+	// all. A FILE or DIR may have its flags after it
 	fs.SetInterspersed(false)
 	fs.Parse(args)
+	rest := fs.Args()
+	if !*diff && len(rest) > 1 {
+		fs.SetInterspersed(true)
+		fs.Parse(rest[1:])
+		rest = append(rest[:1:1], fs.Args()...)
+	}
 
-	spec := CodeSpec{Context: *unified, Split: *split, Depth: *depth}
-	if *tree && fs.NArg() == 1 {
-		spec.Tree = fs.Arg(0)
+	spec := CodeSpec{Split: *split, Depth: *depth, Align: *align}
+	if *diff {
+		spec.Context = unified
+	}
+	if *tree && len(rest) == 1 {
+		spec.Tree = rest[0]
 	} else if *diff {
-		spec.Diff = fs.Args()
-		if spec.Diff == nil {
-			spec.Diff = []string{}
-		}
-	} else if fs.NArg() == 1 {
-		spec.File = fs.Arg(0)
+		spec.Diff = append([]string{}, rest...)
+	} else if len(rest) == 1 {
+		spec.File = rest[0]
 	} else {
 		fs.Usage()
 		os.Exit(2)
@@ -984,13 +1097,17 @@ func cmdCode(args []string) error {
 		return err
 	}
 
-	l, err := spec.load(context.Background())
+	ctx, stop := signalContext()
+	defer stop()
+
+	l, err := spec.load(ctx)
 	if err != nil {
 		return err
 	}
 
 	// What's in it first: drawing a long diff takes a few seconds
 	printListing(l)
+	warnGlyphs(os.Stderr, "code", l.texts())
 
 	r, err := drawListing(l, highlight{focusRange, marks})
 	if err != nil {

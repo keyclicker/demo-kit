@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	flag "github.com/spf13/pflag"
 	"io"
@@ -59,13 +60,14 @@ func (v Voice) over(base Voice) Voice {
 
 // spoken is one synthesized line as a wav file.
 type spoken struct {
-	Wav   string
-	GenID string // empty when it came from the cache
+	Wav string
+	New bool // synthesized now, not from the cache
 }
 
 // speak synthesizes text in voice v to a 48 kHz mono wav, cached by
 // voice and text in ~/.cache/demo/tts: rebuilding a demo after a
-// narration edit only pays for the lines that changed.
+// narration edit only pays for the lines that changed. Beside each wav,
+// its receipt says what it cost when made.
 func speak(ctx context.Context, key string, v Voice,
 	text string) (spoken, error) {
 
@@ -104,11 +106,16 @@ func speak(ctx context.Context, key string, v Voice,
 	if err := transcode(ctx, sp, v.Tempo, f.Name()); err != nil {
 		return spoken{}, err
 	}
+
+	// The receipt first: a cached wav always has one
+	if err := writeReceipt(wav, receipt{GenID: sp.GenID}); err != nil {
+		return spoken{}, err
+	}
 	if err := os.Rename(f.Name(), wav); err != nil {
 		return spoken{}, err
 	}
 
-	return spoken{Wav: wav, GenID: sp.GenID}, nil
+	return spoken{Wav: wav, New: true}, nil
 }
 
 // keyLocks hands out one mutex per key.
@@ -204,7 +211,8 @@ func cmdSay(args []string) error {
 		return err
 	}
 
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 	key, err := apiKey(ctx)
 	if err != nil {
 		return err
@@ -230,11 +238,7 @@ func cmdSay(args []string) error {
 	}
 
 	if *showCost {
-		usd, err := totalCost(ctx, key, []string{sp.GenID})
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "demo: $%.6f\n", usd)
+		fmt.Fprintf(os.Stderr, "demo: %s\n", billOf(ctx, key, []spoken{sp}))
 	}
 
 	return nil
@@ -253,37 +257,142 @@ func voiceFlags(fs *flag.FlagSet) *Voice {
 	return &v
 }
 
-// totalCost prices generations (cached lines have no ID: free), each
-// polled for up to 30 s since OpenRouter prices them a bit late.
-func totalCost(ctx context.Context, key string,
-	ids []string) (float64, error) {
+// ---- Cost ----
 
-	type result struct {
-		usd float64
-		err error
+// receipt is what a cached line cost when it was made: its generation,
+// and once priced, its price. It lives beside the wav, as JSON.
+type receipt struct {
+	GenID string   `json:"gen_id"`
+	USD   *float64 `json:"usd,omitempty"`
+}
+
+// receiptPath names the receipt of a cached wav.
+func receiptPath(wav string) string {
+	return strings.TrimSuffix(wav, ".wav") + ".json"
+}
+
+// readReceipt reads wav's receipt; false when it has none (made before
+// receipts were).
+func readReceipt(wav string) (receipt, bool, error) {
+	data, err := os.ReadFile(receiptPath(wav))
+	if errors.Is(err, os.ErrNotExist) {
+		return receipt{}, false, nil
 	}
-	results := make(chan result, len(ids))
+	if err != nil {
+		return receipt{}, false, err
+	}
 
-	for _, id := range ids {
-		go func() {
-			if id == "" {
-				results <- result{}
-				return
+	var r receipt
+	if err := json.Unmarshal(data, &r); err != nil {
+		return receipt{}, false, fmt.Errorf("%s: %w", receiptPath(wav), err)
+	}
+	return r, true, nil
+}
+
+// writeReceipt writes wav's receipt aside, then renames it in place:
+// other builds never read half a receipt.
+func writeReceipt(wav string, r receipt) error {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+
+	path := receiptPath(wav)
+	f, err := os.CreateTemp(filepath.Dir(path), "part-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+
+	_, err = f.Write(data)
+	if err := firstErr(err, f.Close()); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
+// priceWait is how long a price lookup polls: OpenRouter prices a
+// generation a few seconds after it.
+var priceWait = 30 * time.Second
+
+// price is what wav cost when made, from its receipt, looked up (and
+// written into the receipt) the first time; false when unknown.
+func price(ctx context.Context, key, wav string) (float64, bool, error) {
+	r, ok, err := readReceipt(wav)
+	switch {
+	case err != nil:
+		return 0, false, err
+	case !ok || r.GenID == "":
+		return 0, false, nil
+	case r.USD != nil:
+		return *r.USD, true, nil
+	case key == "":
+		return 0, false, nil // a cached build has no key to look it up
+	}
+
+	usd, err := generationCost(ctx, key, r.GenID, priceWait)
+	if err != nil {
+		return 0, false, err
+	}
+	r.USD = &usd
+	return usd, true, writeReceipt(wav, r)
+}
+
+// speechBill is what a build's lines cost: the new ones, and what the
+// cached ones cost when they were made. Each distinct line counts once.
+type speechBill struct {
+	New, Cached       int // lines
+	NewUSD, CachedUSD float64
+	Unpriced          int // of those, lines with no known price
+}
+
+// String reads "tts $0.0042 new (3 lines), 9 cached ($0.0150)".
+func (b speechBill) String() string {
+	s := fmt.Sprintf("tts $%.4f new (%s)", b.NewUSD, plural(b.New, "line"))
+	if b.Cached > 0 {
+		s += fmt.Sprintf(", %d cached ($%.4f)", b.Cached, b.CachedUSD)
+	}
+	if b.Unpriced > 0 {
+		s += fmt.Sprintf(", %d unpriced", b.Unpriced)
+	}
+	return s
+}
+
+// billOf prices lines in parallel. A failed lookup warns and leaves its
+// line unpriced: the bill still prints.
+func billOf(ctx context.Context, key string, lines []spoken) speechBill {
+	fresh := map[string]bool{}
+	for _, sp := range lines {
+		fresh[sp.Wav] = fresh[sp.Wav] || sp.New
+	}
+
+	var bill speechBill
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for wav, isNew := range fresh {
+		wg.Go(func() {
+			usd, ok, err := price(ctx, key, wav)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "demo: tts cost: %v\n", err)
 			}
-			usd, err := generationCost(ctx, key, id, 30*time.Second)
-			results <- result{usd, err}
-		}()
-	}
 
-	var sum float64
-	for range ids {
-		r := <-results
-		if r.err != nil {
-			return 0, r.err
-		}
-		sum += r.usd
+			if isNew {
+				bill.New++
+				bill.NewUSD += usd
+			} else {
+				bill.Cached++
+				bill.CachedUSD += usd
+			}
+			bill.Unpriced += btoi(!ok)
+		})
 	}
-	return sum, nil
+	wg.Wait()
+
+	return bill
 }
 
 // readText joins args, or reads all of stdin when there are none.

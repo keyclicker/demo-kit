@@ -28,6 +28,15 @@ type span struct{ from, to float64 }
 func quietCuts(ctx context.Context, s Scene) (from, to float64,
 	err error) {
 
+	sound, err := hasAudio(ctx, s.Clip)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !sound {
+		return 0, 0, fmt.Errorf("%s has no sound to keep: drop audio",
+			s.Clip)
+	}
+
 	length, err := probeDuration(ctx, s.Clip)
 	if err != nil {
 		return 0, 0, err
@@ -55,16 +64,28 @@ func quietCuts(ctx context.Context, s Scene) (from, to float64,
 	if from > 0 {
 		from = move("from", from, false)
 	}
-	if to > 0 {
-		return from, move("to", to, true), nil
+	switch {
+	case to > 0:
+		to = move("to", to, true)
+	default:
+		// No to: the file's own end, mid-speech if it was cut so
+		loud, err := endsLoud(ctx, s.Clip)
+		if err != nil {
+			return 0, 0, err
+		}
+		if loud {
+			to = move("its end", length, true)
+		}
 	}
 
-	// No to: the file's own end, mid-speech if it was cut so
-	loud, err := endsLoud(ctx, s.Clip)
-	if err != nil || !loud {
-		return from, 0, err
+	// Moved into pauses, a start can pass its end
+	if to > 0 && from >= to {
+		fmt.Fprintf(os.Stderr, "demo: scene %d: the moved cuts cross "+
+			"(from %.1f s, to %.1f s): kept the script's own\n", s.num,
+			from, to)
+		return s.From, s.To, nil
 	}
-	return from, move("its end", length, true), nil
+	return from, to, nil
 }
 
 // cutAt moves a cut at t into a pause of ps: an end finishes its phrase
