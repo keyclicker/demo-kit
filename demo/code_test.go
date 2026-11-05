@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"os/exec"
@@ -304,8 +306,8 @@ func TestRemovedLinesInSpan(t *testing.T) {
 // down (or right under it, aligned top); a long one at the default
 // size from the top
 func TestListingSize(t *testing.T) {
-	short := &listing{Files: []*codeFile{{Path: "a.go", Hunks: []*hunk{{
-		Lines: []codeLine{{Kind: ' ', Text: "package main", Pos: 1}}}}}}}
+	short := source("a.go", []codeLine{{Kind: ' ', Text: "package main",
+		Pos: 1}})
 	r, err := drawListing(short, highlight{})
 	if err != nil {
 		t.Fatal(err)
@@ -330,8 +332,7 @@ func TestListingSize(t *testing.T) {
 	for i := range 40 {
 		lines = append(lines, codeLine{Kind: ' ', Text: "x", Pos: i + 1})
 	}
-	long := &listing{Files: []*codeFile{{Path: "a.go",
-		Hunks: []*hunk{{Lines: lines}}}}}
+	long := source("a.go", lines)
 	if r, err = drawListing(long, highlight{}); err != nil {
 		t.Fatal(err)
 	}
@@ -360,12 +361,11 @@ deleted file mode 100644
 }
 
 func TestListingHeightCap(t *testing.T) {
-	h := &hunk{Index: 1}
+	var lines []codeLine
 	for i := 1; i <= 2000; i++ {
-		h.Lines = append(h.Lines, codeLine{Kind: ' ', Old: i, New: i, Pos: i})
+		lines = append(lines, codeLine{Kind: ' ', Old: i, New: i, Pos: i})
 	}
-	l := &listing{Files: []*codeFile{{Path: "big.txt", Hunks: []*hunk{h}}}}
-	if _, err := drawListing(l, highlight{}); err == nil {
+	if _, err := drawListing(source("big.txt", lines), highlight{}); err == nil {
 		t.Fatal("2000 lines drawn")
 	}
 }
@@ -458,4 +458,65 @@ func TestCodeFlagsAfterFile(t *testing.T) {
 	if _, err := os.Stat(out); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// source is a plain source listing of lines, as readSource makes one.
+func source(path string, lines []codeLine) *listing {
+	h := &hunk{Index: 1, OldStart: 1, NewStart: 1, Lines: lines}
+	return &listing{Files: []*codeFile{{Path: path, Hunks: []*hunk{h},
+		Whole: h}}}
+}
+
+// A short range sits in its file: the header counts the file's lines,
+// the line before it shows faded, and past the file's start, a ~
+func TestSurroundings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.txt")
+	os.WriteFile(path, []byte("one\ntwo\nthree\n"), 0o644)
+
+	l, err := readSource(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Files = cropLines(l.Files, 2, 2)
+	if got := shownLines(l.Files[0]); got != "lines 2-2 of 3" {
+		t.Fatalf("header %q", got)
+	}
+
+	r, err := drawListing(l, highlight{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	span := r.rows[2]
+	rowH := span[1] - span[0]
+	codeX := margin + 8*(rowH*3/7) // past the gutter at any size
+	gutter := func(y int) image.Rectangle {
+		return image.Rect(0, y, codeX, y+rowH)
+	}
+	code := func(y int) image.Rectangle {
+		return image.Rect(codeX, y, frameW, y+rowH)
+	}
+
+	if y := span[0] - rowH; !inked(r.Img, code(y)) {
+		t.Fatal("line 1 not shown above the range")
+	}
+	if y := span[0] - 2*rowH; !inked(r.Img, gutter(y)) ||
+		inked(r.Img, code(y)) {
+		t.Fatal("no ~ before the file's start")
+	}
+	if y := span[1]; !inked(r.Img, code(y)) {
+		t.Fatal("line 3 not shown below the range")
+	}
+}
+
+// inked reports whether any pixel in r differs from the background.
+func inked(img *image.RGBA, r image.Rectangle) bool {
+	bg := color.RGBAModel.Convert(colBG).(color.RGBA)
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			if img.RGBAAt(x, y) != bg {
+				return true
+			}
+		}
+	}
+	return false
 }

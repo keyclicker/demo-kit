@@ -47,6 +47,10 @@ type codeFile struct {
 	Binary     bool
 	Hunks      []*hunk
 	Adds, Dels int
+
+	// Whole is a plain source's every line, however it's cropped: the
+	// header counts them, and the frame around a short range shows them
+	Whole *hunk
 }
 
 // hunk is one block of lines. In a diff, Index counts hunks across the
@@ -178,8 +182,20 @@ func readSource(path string) (*listing, error) {
 			Pos: n, Text: line})
 	}
 
-	file := &codeFile{Path: homePath(path), Hunks: []*hunk{h}}
+	file := &codeFile{Path: homePath(path), Hunks: []*hunk{h}, Whole: h}
 	return &listing{Files: []*codeFile{file}}, nil
+}
+
+// shownLines puts a plain source's shown lines against its length:
+// "312 lines" whole, "lines 40-60 of 312" cropped.
+func shownLines(f *codeFile) string {
+	lines, total := f.Hunks[0].Lines, len(f.Whole.Lines)
+	first, last := lines[0].Pos, lines[len(lines)-1].Pos
+
+	if first == 1 && last == total {
+		return fmt.Sprintf("%d lines", total)
+	}
+	return fmt.Sprintf("lines %d-%d of %d", first, last, total)
 }
 
 // homePath shortens a path under $HOME to ~/..., for headers.
@@ -518,14 +534,15 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 
 	// A split keeps its size; else the largest that fits one frame
 	// and wraps no more lines than the default, or the default, paged
+	runs := lexListing(l)
 	var p *painter
 	if l.Split {
-		p = newPainter(l, hl, splitMetrics)
+		p = newPainter(l, runs, hl, splitMetrics)
 	} else {
-		p = newPainter(l, hl, unifiedMetrics)
+		p = newPainter(l, runs, hl, unifiedMetrics)
 		p.layout(nil)
 		for _, m := range largeMetrics {
-			big := newPainter(l, hl, m)
+			big := newPainter(l, runs, hl, m)
 			if big.layout(nil) <= frameH && big.wraps <= p.wraps {
 				p = big
 				break
@@ -558,12 +575,13 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 	return &render{Img: p.img, rows: p.rows}, nil
 }
 
-// newPainter sets a painter up to draw l with hl at m's size: one pane,
-// or a split's two.
-func newPainter(l *listing, hl highlight, m metrics) *painter {
+// newPainter sets a painter up to draw l, colored by runs, with hl at
+// m's size: one pane, or a split's two.
+func newPainter(l *listing, runs colors, hl highlight, m metrics) *painter {
 	regular := monoFace(false, m.fontSize)
-	p := &painter{listing: l, face: regular, bold: monoFace(true, m.fontSize),
-		hl: hl, rowH: m.rowH, marked: map[string]bool{}}
+	p := &painter{listing: l, runs: runs, face: regular,
+		bold: monoFace(true, m.fontSize), hl: hl, rowH: m.rowH,
+		marked: map[string]bool{}}
 	p.adv = font.MeasureString(regular, "M").Round()
 
 	if l.Split {
@@ -606,6 +624,7 @@ func (p *painter) newPane(x, w, margin int, old bool) pane {
 // measures.
 type painter struct {
 	listing    *listing
+	runs       colors
 	face, bold font.Face
 	hl         highlight
 	marked     map[string]bool // marks found, for drawListing's check
@@ -643,8 +662,6 @@ func (p *painter) layout(img *image.RGBA) int {
 			continue
 		}
 
-		lexer := chroma.Coalesce(lexerFor(f.Path))
-
 		for _, h := range f.Hunks {
 			if p.listing.Diff {
 				if img != nil {
@@ -653,12 +670,12 @@ func (p *painter) layout(img *image.RGBA) int {
 				y += hunkRowH
 			}
 
-			runs := highlightHunk(lexer, h)
-			if p.listing.Tree {
-				runs = treeRuns(h)
-			}
+			top := y
 			for _, row := range p.rowsOf(h) {
-				y += p.row(img, y, h, runs, row)
+				y += p.row(img, y, h, p.runs[h], row)
+			}
+			if img != nil && f.Whole != nil {
+				p.surround(img, f, h, top, y)
 			}
 		}
 
@@ -773,9 +790,7 @@ func (p *painter) fileHeader(img *image.RGBA, y int, f *codeFile) {
 	}
 
 	if !p.listing.Diff {
-		lines := f.Hunks[0].Lines
-		drawText(img, p.face, x, y, fileRowH, fmt.Sprintf("  lines %d-%d",
-			lines[0].Pos, lines[len(lines)-1].Pos), colDim)
+		drawText(img, p.face, x, y, fileRowH, "  "+shownLines(f), colDim)
 		return
 	}
 
@@ -845,6 +860,51 @@ func (p *painter) codeLine(img *image.RGBA, pn pane, y, h int, l codeLine,
 		fill(img, pn.x, y, focusBar, h, colFocus)
 	default:
 		fade(img, image.Rect(pn.x, y, pn.x+pn.w, y+h))
+	}
+}
+
+// surround fills the frame around a plain source's shown rows [top,
+// bottom) with its lines before and after them, faded, and vi's ~ past
+// either end of the file: the range sits in its file, as in an editor.
+func (p *painter) surround(img *image.RGBA, f *codeFile, h *hunk,
+	top, bottom int) {
+
+	first, last := h.Lines[0].Pos, h.Lines[len(h.Lines)-1].Pos
+	above := img.SubImage(image.Rect(0, margin+fileRowH, frameW, top))
+	below := img.SubImage(image.Rect(0, bottom, frameW, img.Rect.Max.Y))
+
+	// Drawn into the sub-images: rows cut by an edge clip there
+	for _, side := range []struct {
+		img      *image.RGBA
+		y, n, dn int
+	}{
+		{above.(*image.RGBA), top - p.rowH, first - 1, -1},
+		{below.(*image.RGBA), bottom, last + 1, 1},
+	} {
+		r := side.img.Rect
+		for y, n := side.y, side.n; y+p.rowH > r.Min.Y && y < r.Max.Y; {
+			p.unshown(side.img, y, f, n)
+			y, n = y+side.dn*p.rowH, n+side.dn
+		}
+		fade(side.img, r)
+	}
+}
+
+// unshown draws f's line n at y, one row (the rest clipped), or vi's ~
+// where the file has no line n.
+func (p *painter) unshown(img *image.RGBA, y int, f *codeFile, n int) {
+	pn := p.panes[0]
+	gx := pn.x + pn.margin
+
+	if n < 1 || n > len(f.Whole.Lines) {
+		drawText(img, p.face, gx, y, p.rowH, "~", colDim)
+		return
+	}
+
+	drawText(img, p.face, gx, y, p.rowH, fmt.Sprintf("%5d", n), colDim)
+	x := pn.codeX
+	for _, t := range wrapTokens(p.runs[f.Whole][n-1], pn.cols)[0] {
+		x = drawText(img, p.face, x, y, p.rowH, t.text, t.col)
 	}
 }
 
@@ -929,6 +989,40 @@ func lexerFor(path string) chroma.Lexer {
 		return l
 	}
 	return lexers.Fallback
+}
+
+// colors is each hunk's runs, one []run per line, lexed once per
+// drawing whatever sizes it tries.
+type colors map[*hunk][][]run
+
+// lexListing colors l's hunks. A plain source is lexed whole and its
+// shown lines sliced out, so a range starting inside a string or a
+// comment keeps its colors; its Whole keeps all of them, for surround.
+func lexListing(l *listing) colors {
+	runs := colors{}
+
+	for _, f := range l.Files {
+		lexer := chroma.Coalesce(lexerFor(f.Path))
+
+		if f.Whole != nil {
+			whole := highlightHunk(lexer, f.Whole)
+			runs[f.Whole] = whole
+			for _, h := range f.Hunks {
+				from := h.Lines[0].Pos - 1
+				runs[h] = whole[from : from+len(h.Lines)]
+			}
+			continue
+		}
+
+		for _, h := range f.Hunks {
+			if l.Tree {
+				runs[h] = treeRuns(h)
+			} else {
+				runs[h] = highlightHunk(lexer, h)
+			}
+		}
+	}
+	return runs
 }
 
 // highlightHunk colors a hunk's lines, one []run per line. Each side
@@ -1143,7 +1237,7 @@ func printListing(l *listing) {
 				continue
 			}
 			if !l.Diff {
-				fmt.Printf("%s lines %d-%d\n", f.Path, first, last)
+				fmt.Printf("%s %s\n", f.Path, shownLines(f))
 				continue
 			}
 
