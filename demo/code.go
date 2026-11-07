@@ -492,13 +492,16 @@ var (
 	}
 )
 
-// render is a drawn listing: the image, and where each line landed.
+// render is a drawn listing: the image, where each line landed, and
+// each file header's y (sticky: shot).
 type render struct {
-	Img  *image.RGBA
-	rows map[int][2]int // Pos → [top, bottom) y
+	Img   *image.RGBA
+	Heads []int
+	rows  map[int][2]int // Pos → [top, bottom) y
 }
 
-// focusY is the view top that centers lines [from, to] (centerY).
+// focusY is the view top that centers lines [from, to] (centerY) in
+// the frame under a pinned header.
 func (r *render) focusY(from, to int) int {
 	top, bottom := -1, 0
 	for pos, span := range r.rows {
@@ -512,7 +515,7 @@ func (r *render) focusY(from, to int) int {
 	if top < 0 {
 		return 0
 	}
-	return centerY(top, bottom, r.Img.Bounds().Dy())
+	return centerY(top-margin-fileRowH, bottom, r.Img.Bounds().Dy())
 }
 
 // highlight is what a step points at: Focus lines [from, to] get a
@@ -572,7 +575,7 @@ func drawListing(l *listing, hl highlight) (*render, error) {
 			"(demo code lists them)", f[0], f[1])
 	}
 
-	return &render{Img: p.img, rows: p.rows}, nil
+	return &render{Img: p.img, Heads: p.heads, rows: p.rows}, nil
 }
 
 // newPainter sets a painter up to draw l, colored by runs, with hl at
@@ -635,19 +638,21 @@ type painter struct {
 	top   int // px between the first header and its code (lift)
 	wraps int // rows past a line's first, counted by layout
 
-	img  *image.RGBA
-	rows map[int][2]int
+	img   *image.RGBA
+	rows  map[int][2]int
+	heads []int // file headers' y, as drawn
 }
 
 // layout walks every row; it draws into img unless nil, and returns
 // the total height.
 func (p *painter) layout(img *image.RGBA) int {
 	y := margin
-	p.wraps = 0
+	p.wraps, p.heads = 0, nil
 
 	for i, f := range p.listing.Files {
 		if img != nil {
 			p.fileHeader(img, y, f)
+			p.heads = append(p.heads, y)
 		}
 		y += fileRowH
 		if i == 0 {

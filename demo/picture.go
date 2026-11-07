@@ -99,14 +99,14 @@ func (p *picture) region(name string, r []int) (image.Rectangle, error) {
 // thick on screen however close the zoom); without, plain.
 func (p *picture) point(a aim) stepView {
 	if a.box.Empty() {
-		return stepView{p.canvas, a.y}
+		return stepView{p.canvas, nil, a.y}
 	}
 
 	img := image.NewRGBA(p.canvas.Bounds())
 	copy(img.Pix, p.canvas.Pix)
 	t := max(1, int(math.Round(focusBar/2*a.view.w/frameW)))
 	spotlight(img, a.box, t)
-	return stepView{img, a.y}
+	return stepView{img, nil, a.y}
 }
 
 // inside checks source point (x, y) is on the image.

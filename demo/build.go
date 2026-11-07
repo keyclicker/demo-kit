@@ -44,6 +44,7 @@ type Scene struct {
 	To       float64 `json:"to,omitempty"`
 	Audio    bool    `json:"audio,omitempty"`    // keep its sound, ducked
 	Decimate *bool   `json:"decimate,omitempty"` // drop idle frames: default
+	Trim     *bool   `json:"trim,omitempty"`     // cut still edges: default
 
 	Image string     `json:"image,omitempty"`
 	Code  *CodeSpec  `json:"code,omitempty"`
@@ -140,9 +141,9 @@ func (s Scene) check() error {
 		return errors.New("needs say or steps, or secs for a silent scene")
 	case s.To != 0 && s.To <= s.From:
 		return errors.New("to must be after from")
-	case s.Clip == "" && (s.Audio || s.Decimate != nil || s.From != 0 ||
-		s.To != 0):
-		return errors.New("from, to, audio and decimate need a clip")
+	case s.Clip == "" && (s.Audio || s.Decimate != nil || s.Trim != nil ||
+		s.From != 0 || s.To != 0):
+		return errors.New("from, to, audio, decimate and trim need a clip")
 	case s.Audio && s.decimate():
 		return errors.New("audio needs every frame: drop decimate")
 	}
@@ -200,6 +201,22 @@ func (s Scene) decimate() bool {
 	return !s.Audio && len(s.parts()) > 0
 }
 
+// trim is whether a clip's still edges go (trimStill): yes unless
+// told.
+func (s Scene) trim() bool {
+	return s.Trim == nil || *s.Trim
+}
+
+// minLength is the scene's floor under its narration: secs, or for a
+// clip with nothing said, its cut's own length. A narrated clip gets
+// no floor: it speeds up to fit what's said, never trails silence.
+func (s Scene) minLength(cut span) float64 {
+	if s.Secs == 0 && s.Clip != "" && len(s.parts()) == 0 {
+		return cut.to - cut.from
+	}
+	return s.Secs
+}
+
 // parts is what the scene says, as steps: Say is a single step.
 func (s Scene) parts() []Step {
 	if s.Steps != nil {
@@ -219,8 +236,9 @@ script.json: one object
   voice    object  name (demo voices), instructions, tempo, model;
                    defaults are tuned
   scenes   array   played in order, each with one picture:
-    clip     path    any video; from, to: seconds to keep. Idle frames
-                     go (decimate: false keeps them, for real footage),
+    clip     path    any video; from, to: seconds to keep. Still edges
+                     go (trim: false keeps them), idle frames go
+                     (decimate: false keeps them, for real footage),
                      then it speeds up to fit; audio: true keeps its
                      sound, ducked under the voice (and every frame)
     image    path    PNG, JPEG, WebP or GIF (first frame); taller than
@@ -245,11 +263,12 @@ script.json: one object
                      command
     voice    object  this scene's voice, over the script's
     secs     number  minimum length; needed when nothing is said, but
-                     a clip then plays its own length
+                     a clip then plays its own (trimmed) cut
     chapter  string  starts a chapter here
 
 Clips and images resolve against the script; code and term against
-the current directory.
+the current directory. The built video is checked for dead air: still
+and silent 1.5 s or longer warns, naming its scene.
 `
 
 // ---- Timing ----
@@ -480,7 +499,8 @@ func newBuilder(s *Script, work string, draft bool) *builder {
 }
 
 // build runs every stage: speech, term sessions, scene videos, scene
-// audio, then one final encode with captions and chapters.
+// audio, then one final encode with captions and chapters, checked for
+// dead air.
 func (b *builder) build(ctx context.Context, video string) error {
 	if err := b.cutClips(ctx); err != nil {
 		return err
@@ -554,7 +574,10 @@ func (b *builder) build(ctx context.Context, video string) error {
 	if err := ffmpeg(ctx, b.work, nil, args...); err != nil {
 		return err
 	}
-	return os.Rename(partial, video)
+	if err := os.Rename(partial, video); err != nil {
+		return err
+	}
+	return b.warnDeadAir(ctx, os.Stderr, video)
 }
 
 // finalFilter is the final encode's picture: a band of its own under
@@ -575,7 +598,8 @@ func finalFilter(captions bool) string {
 }
 
 // cutClips settles where each clip is cut: from and to (its end if
-// unset), moved into pauses when it keeps its sound (quietCuts).
+// unset), moved into pauses when it keeps its sound (quietCuts), then
+// its still edges trimmed (trimCut).
 // Before timing: a clip with nothing said lasts as long as its cut.
 func (b *builder) cutClips(ctx context.Context) error {
 	b.cuts = make([]span, len(b.script.Scenes))
@@ -600,6 +624,11 @@ func (b *builder) cutClips(ctx context.Context) error {
 				return fmt.Errorf("scene %d: %w", s.num, err)
 			}
 			c.to = cmp.Or(c.to, length)
+		}
+		if s.trim() {
+			if c, err = trimCut(ctx, os.Stderr, s, c); err != nil {
+				return fmt.Errorf("scene %d: %w", s.num, err)
+			}
 		}
 		b.cuts[i] = c
 	}
@@ -659,11 +688,7 @@ func (b *builder) speak(ctx context.Context) error {
 
 	at := 0.0
 	for i, s := range scenes {
-		secs := s.Secs
-		if c := b.cuts[i]; secs == 0 && s.Clip != "" {
-			secs = c.to - c.from // nothing said: the clip's own length
-		}
-		t := sceneTiming(durs[i], secs)
+		t := sceneTiming(durs[i], s.minLength(b.cuts[i]))
 		b.timings = append(b.timings, t)
 
 		for k, p := range s.parts() {
@@ -783,7 +808,7 @@ func (b *builder) drawnShots(ctx context.Context, i int, s Scene,
 	case s.Term != nil:
 		return b.termShots(i, s, n, cuts), nil, nil
 	default:
-		return still(drawSlide(*s.Slide), n), nil, nil
+		return still(drawSlide(*s.Slide), nil, n), nil, nil
 	}
 }
 
@@ -803,7 +828,7 @@ func codeShots(ctx context.Context, s Scene, n int, cuts []int) (shots,
 		if err != nil {
 			return nil, err
 		}
-		return still(r.Img, n), nil
+		return still(r.Img, r.Heads, n), nil
 	}
 
 	return stepShots(cuts, n, func(k int) (stepView, error) {
@@ -818,7 +843,7 @@ func codeShots(ctx context.Context, s Scene, n int, cuts []int) (shots,
 		if st.Focus != nil {
 			y = r.focusY(st.Focus[0], st.Focus[1])
 		}
-		return stepView{r.Img, y}, nil
+		return stepView{r.Img, r.Heads, y}, nil
 	}), nil
 }
 
@@ -832,7 +857,7 @@ func imageShots(s Scene, n int, cuts []int) (shots, []rect, error) {
 	}
 
 	if s.Steps == nil {
-		return still(p.canvas, n), nil, nil
+		return still(p.canvas, nil, n), nil, nil
 	}
 
 	// Aimed up front, so a bad box fails before any frame is drawn
