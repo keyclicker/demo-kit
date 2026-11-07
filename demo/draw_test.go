@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"image"
+	"image/color"
 	"os"
 	"path/filepath"
 	"slices"
@@ -38,12 +39,12 @@ func total(shots []shot) int {
 
 func TestStill(t *testing.T) {
 	// Fits: one shot. Taller: pages, flush with the bottom at the end
-	if got := collect(t, still(newCanvas(frameH), 90)); len(got) != 1 {
+	if got := collect(t, still(newCanvas(frameH), nil, 90)); len(got) != 1 {
 		t.Fatalf("one frame: %d shots", len(got))
 	}
 
 	tall := newCanvas(frameH + pageStep + 1)
-	pages := collect(t, still(tall, 91))
+	pages := collect(t, still(tall, nil, 91))
 	if len(pages) != 3 || total(pages) != 91 {
 		t.Fatalf("pages: %d shots, %d frames", len(pages), total(pages))
 	}
@@ -56,7 +57,7 @@ func TestStepShots(t *testing.T) {
 	img := newCanvas(3 * frameH)
 	ys := []int{500, -1, 100}
 	got := collect(t, stepShots([]int{0, 30, 50}, 80,
-		func(k int) (stepView, error) { return stepView{img, ys[k]}, nil }))
+		func(k int) (stepView, error) { return stepView{img, nil, ys[k]}, nil }))
 
 	if len(got) != 3 || total(got) != 80 || got[0].n != 30 {
 		t.Fatalf("shots: %+v", got)
@@ -75,6 +76,47 @@ func TestView(t *testing.T) {
 	}
 	if top := (len(img.Pix) - cap(b)) / img.Stride; top != 100 {
 		t.Fatalf("view at row %d", top)
+	}
+}
+
+func TestPinned(t *testing.T) {
+	heads := []int{margin, 2000}
+	for _, tc := range []struct {
+		y, head, at int
+		ok          bool
+	}{
+		{0, 0, 0, false},                                   // at rest: the real one
+		{500, margin, margin, true},                        // scrolled past: pinned
+		{2000 - 2*margin - fileRowH, margin, margin, true}, // next touches
+		{2000 - margin - fileRowH, margin, 0, true},        // pushed up
+		{2000 - margin, 0, 0, false},                       // the next at rest
+		{2100, 2000, margin, true},                         // the next pinned
+	} {
+		head, at, ok := pinned(heads, tc.y)
+		if ok != tc.ok || ok && (head != tc.head || at != tc.at) {
+			t.Errorf("y %d: %d %d %v, want %d %d %v", tc.y, head, at, ok,
+				tc.head, tc.at, tc.ok)
+		}
+	}
+}
+
+// Scrolled down, the frame's top shows the header, not the code there
+func TestViewPinsHeader(t *testing.T) {
+	img := newCanvas(3 * frameH)
+	fill(img, 0, frameH, frameW, 2*frameH, colText) // "code" below
+	fill(img, 0, margin, frameW, fileRowH, colFileBG)
+
+	b := view(shot{img: img, heads: []int{margin}, y: frameH, n: 1})
+	px := func(row int) color.RGBA {
+		i := row * img.Stride
+		return color.RGBA{b[i], b[i+1], b[i+2], b[i+3]}
+	}
+	if px(0) != colBG || px(margin) != colFileBG ||
+		px(margin+fileRowH) != colText {
+		t.Fatalf("rows: %v %v %v", px(0), px(margin), px(margin+fileRowH))
+	}
+	if img.RGBAAt(0, frameH) != colText {
+		t.Fatal("pinning drew on the picture")
 	}
 }
 

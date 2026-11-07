@@ -15,6 +15,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -248,11 +249,14 @@ func savePNG(img image.Image, path string) error {
 // ---- Shots ----
 
 // shot is a drawn picture held for n frames: the frame-high view of
-// img at y. img is frameW wide and at least frameH tall.
+// img at y. img is frameW wide and at least frameH tall; heads are the
+// y of its sticky header rows (a code file's), pinned once scrolled
+// past (view).
 type shot struct {
-	img *image.RGBA
-	y   int
-	n   int
+	img   *image.RGBA
+	heads []int
+	y     int
+	n     int
 }
 
 // shots produces a scene's shots in order, one at a time, so a scene
@@ -260,15 +264,16 @@ type shot struct {
 type shots func(emit func(shot) error) error
 
 // still is one picture for n frames: a view of its top if it fits, else
-// its pages in turn.
-func still(img *image.RGBA, n int) shots {
+// its pages in turn. heads: its sticky headers (shot).
+func still(img *image.RGBA, heads []int, n int) shots {
 	return func(emit func(shot) error) error {
 		tall := img.Bounds().Dy()
 		pages := pageCount(tall)
 		for k := range pages {
 			y := min(k*pageStep, tall-frameH)
 			start, end := n*k/pages, n*(k+1)/pages
-			if err := emit(shot{img: img, y: y, n: end - start}); err != nil {
+			err := emit(shot{img: img, heads: heads, y: y, n: end - start})
+			if err != nil {
 				return err
 			}
 		}
@@ -282,11 +287,12 @@ func pageCount(tall int) int {
 	return 1 + max(0, tall-frameH+pageStep-1)/pageStep
 }
 
-// stepView is one step's picture and the top of its view; y < 0 keeps
-// the last step's view (the top, first).
+// stepView is one step's picture, its sticky headers (shot) and the
+// top of its view; y < 0 keeps the last step's view (the top, first).
 type stepView struct {
-	img *image.RGBA
-	y   int
+	img   *image.RGBA
+	heads []int
+	y     int
 }
 
 // stepShots is one shot per step, cut at the scene's step cuts (in
@@ -309,7 +315,8 @@ func stepShots(cuts []int, n int,
 			if k+1 < len(cuts) {
 				end = cuts[k+1]
 			}
-			if err := emit(shot{img: v.img, y: y, n: end - cuts[k]}); err != nil {
+			err = emit(shot{img: v.img, heads: v.heads, y: y, n: end - cuts[k]})
+			if err != nil {
 				return err
 			}
 		}
@@ -347,11 +354,13 @@ func (b *builder) drawnVideo(ctx context.Context, n int, shots shots,
 	written := 0
 	var last []byte
 	err := shots(func(s shot) error {
+		if s.n > 0 {
+			last = view(s) // once per shot: a pinned header copies it
+		}
 		for range s.n {
 			if written == n {
 				return nil
 			}
-			last = view(s)
 			if _, err := w.Write(last); err != nil {
 				return err
 			}
@@ -377,10 +386,49 @@ func (b *builder) drawnVideo(ctx context.Context, n int, shots shots,
 }
 
 // view is s's frame: its view's rows, straight out of the picture (a
-// frameW-wide RGBA's rows are contiguous).
+// frameW-wide RGBA's rows are contiguous), or a copy with the header
+// scrolled past pinned on top, over a margin of background.
 func view(s shot) []byte {
 	stride := s.img.Stride
-	return s.img.Pix[s.y*stride : (s.y+frameH)*stride]
+	rows := s.img.Pix[s.y*stride : (s.y+frameH)*stride]
+
+	head, at, ok := pinned(s.heads, s.y)
+	if !ok {
+		return rows
+	}
+
+	frame := slices.Clone(rows)
+	bg := image.NewRGBA(image.Rect(0, 0, frameW, 1))
+	fill(bg, 0, 0, frameW, 1, colBG)
+	for r := range max(at, 0) {
+		copy(frame[r*stride:], bg.Pix)
+	}
+	for r := max(at, 0); r < at+fileRowH; r++ {
+		src := (head + r - at) * stride
+		copy(frame[r*stride:(r+1)*stride], s.img.Pix[src:src+stride])
+	}
+	return frame
+}
+
+// pinned is where a view at y pins its sticky header: the last of heads
+// scrolled above its resting row (margin), drawn from frame row at,
+// pushed up by the next header as it arrives. ok is false for none.
+func pinned(heads []int, y int) (head, at int, ok bool) {
+	i := -1
+	for k, h := range heads {
+		if h-y < margin {
+			i = k
+		}
+	}
+	if i < 0 {
+		return 0, 0, false
+	}
+
+	at = margin
+	if i+1 < len(heads) {
+		at = min(at, heads[i+1]-y-margin-fileRowH)
+	}
+	return heads[i], at, at+fileRowH > 0
 }
 
 // firstErr is the first of its arguments that isn't nil.

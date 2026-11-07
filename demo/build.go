@@ -808,7 +808,7 @@ func (b *builder) drawnShots(ctx context.Context, i int, s Scene,
 	case s.Term != nil:
 		return b.termShots(i, s, n, cuts), nil, nil
 	default:
-		return still(drawSlide(*s.Slide), n), nil, nil
+		return still(drawSlide(*s.Slide), nil, n), nil, nil
 	}
 }
 
@@ -828,7 +828,7 @@ func codeShots(ctx context.Context, s Scene, n int, cuts []int) (shots,
 		if err != nil {
 			return nil, err
 		}
-		return still(r.Img, n), nil
+		return still(r.Img, r.Heads, n), nil
 	}
 
 	return stepShots(cuts, n, func(k int) (stepView, error) {
@@ -843,7 +843,7 @@ func codeShots(ctx context.Context, s Scene, n int, cuts []int) (shots,
 		if st.Focus != nil {
 			y = r.focusY(st.Focus[0], st.Focus[1])
 		}
-		return stepView{r.Img, y}, nil
+		return stepView{r.Img, r.Heads, y}, nil
 	}), nil
 }
 
@@ -857,7 +857,7 @@ func imageShots(s Scene, n int, cuts []int) (shots, []rect, error) {
 	}
 
 	if s.Steps == nil {
-		return still(p.canvas, n), nil, nil
+		return still(p.canvas, nil, n), nil, nil
 	}
 
 	// Aimed up front, so a bad box fails before any frame is drawn
