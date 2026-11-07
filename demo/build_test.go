@@ -35,6 +35,25 @@ func TestSceneTiming(t *testing.T) {
 	}
 }
 
+// Only a silent clip takes its cut's length; narration sets the rest
+func TestMinLength(t *testing.T) {
+	cut := span{from: 2, to: 14}
+
+	if l := (Scene{Clip: "a.mp4"}).minLength(cut); l != 12 {
+		t.Fatalf("silent clip: %v, want the cut's 12 s", l)
+	}
+	if l := (Scene{Clip: "a.mp4", Say: "hi"}).minLength(cut); l != 0 {
+		t.Fatalf("narrated clip: %v, want no floor", l)
+	}
+	steps := []Step{{Say: "a"}, {Say: "b"}}
+	if l := (Scene{Clip: "a.mp4", Steps: steps}).minLength(cut); l != 0 {
+		t.Fatalf("narrated steps: %v, want no floor", l)
+	}
+	if l := (Scene{Clip: "a.mp4", Say: "hi", Secs: 9}).minLength(cut); l != 9 {
+		t.Fatalf("secs: %v, want 9", l)
+	}
+}
+
 func TestSpeedFor(t *testing.T) {
 	if s := speedFor(20, 5); s != 4 {
 		t.Fatalf("long clip: %v", s)

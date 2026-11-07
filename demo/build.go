@@ -200,6 +200,16 @@ func (s Scene) decimate() bool {
 	return !s.Audio && len(s.parts()) > 0
 }
 
+// minLength is the scene's floor under its narration: secs, or for a
+// clip with nothing said, its cut's own length. A narrated clip gets
+// no floor: it speeds up to fit what's said, never trails silence.
+func (s Scene) minLength(cut span) float64 {
+	if s.Secs == 0 && s.Clip != "" && len(s.parts()) == 0 {
+		return cut.to - cut.from
+	}
+	return s.Secs
+}
+
 // parts is what the scene says, as steps: Say is a single step.
 func (s Scene) parts() []Step {
 	if s.Steps != nil {
@@ -659,11 +669,7 @@ func (b *builder) speak(ctx context.Context) error {
 
 	at := 0.0
 	for i, s := range scenes {
-		secs := s.Secs
-		if c := b.cuts[i]; secs == 0 && s.Clip != "" {
-			secs = c.to - c.from // nothing said: the clip's own length
-		}
-		t := sceneTiming(durs[i], secs)
+		t := sceneTiming(durs[i], s.minLength(b.cuts[i]))
 		b.timings = append(b.timings, t)
 
 		for k, p := range s.parts() {
