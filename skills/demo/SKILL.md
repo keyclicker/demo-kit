@@ -131,8 +131,10 @@ Every field, one line each: `demo build -h`. Narration sets each
 scene's length; steps point at the picture as they're said (a code
 focus, an image's box, a zoom on an image or a clip, a terminal's
 next command).
-Recordings lose idle frames and speed up to fit; a clip with nothing
-said plays as it is. Code and terminals size themselves to the frame
+Recordings lose still edges and idle frames, then speed up to fit; a
+clip with nothing said plays its trimmed cut (`trim: false` keeps it
+whole). The build warns on dead air (still and silent 1.5 s+): fix
+it, unless it's on purpose. Code and terminals size themselves to the frame
 (`"align": "top"` keeps short code up top; terminals always are).
 Mistakes fail with a reason. Cut clips with `from`/`to`, not by hand:
 with `audio: true` the cuts move into pauses, so speech never stops
