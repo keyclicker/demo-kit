@@ -71,7 +71,7 @@ func termColsAt(m metrics) int {
 
 // termRowsAt is how many rows a terminal at m's size shows.
 func termRowsAt(m metrics) int {
-	return (frameH - fileRowH - 2*margin) / m.rowH
+	return (frameH - bodyTop - margin) / m.rowH
 }
 
 // ---- Running ----
@@ -615,7 +615,7 @@ func (sc *screen) draw(lines [][]run) *image.RGBA {
 	}
 	rows = rows[max(0, len(rows)-termRowsAt(m)):]
 
-	y := fileRowH + margin
+	y := bodyTop
 	end := margin
 	for _, row := range rows {
 		x := margin

@@ -316,7 +316,7 @@ func TestListingSize(t *testing.T) {
 		span[0] < frameH/4 || span[0] > frameH/2 {
 		t.Fatalf("short listing's line at %v", span)
 	}
-	if c := r.Img.RGBAAt(frameW/2, margin+fileRowH/2); c != colFileBG {
+	if c := r.Img.RGBAAt(frameW/2, fileRowH/2); c != colFileBG {
 		t.Fatalf("header not on top: %v", c)
 	}
 
@@ -324,7 +324,7 @@ func TestListingSize(t *testing.T) {
 	if r, err = drawListing(short, highlight{}); err != nil {
 		t.Fatal(err)
 	}
-	if span := r.rows[1]; span[0] != margin+fileRowH {
+	if span := r.rows[1]; span[0] != bodyTop {
 		t.Fatalf("top-aligned line at %v", span)
 	}
 

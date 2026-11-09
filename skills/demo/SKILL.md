@@ -1,14 +1,17 @@
 ---
 name: demo
-description: Use when the user asks for a demo, an explainer, a walkthrough, or a video review of a change or PR. A short narrated video, made with `demo` from screen recordings and drawn code.
+description: Use when the user wants something told as a video: a demo, an explainer, a tutorial, a walkthrough, a review, a catch-up, an answer. A short narrated video, made with `demo` from screen recordings, terminals and drawn code.
 ---
 
 # Demo videos
 
-A short narrated video instead of text: show the thing, explain it,
-point at the code. Be creative: pick the shots, order, pace and tone
-that fit the subject. Nothing here is a template, except where files
-go.
+A short narrated video instead of text, on whatever the user wants
+told: a change, how something works, a tutorial, a catch-up, an
+answer to a question.
+
+Show the thing, explain it, point at what matters. Be creative: pick
+the shots, order, pace and tone that fit the subject. Nothing here is
+a template, except where files go.
 
 Show the real thing while you talk: the app, a terminal, the code, a
 diff. A slide is an accent (a hook, one callout, the end card), never
