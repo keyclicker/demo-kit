@@ -467,6 +467,7 @@ func btoi(b bool) int {
 const (
 	margin   = 24
 	fileRowH = 52
+	bodyTop  = fileRowH + margin // a header bar on top, then a margin
 	hunkRowH = 38
 	gapH     = 14
 	tabWidth = 4
@@ -515,7 +516,7 @@ func (r *render) focusY(from, to int) int {
 	if top < 0 {
 		return 0
 	}
-	return centerY(top-margin-fileRowH, bottom, r.Img.Bounds().Dy())
+	return centerY(top-bodyTop, bottom, r.Img.Bounds().Dy())
 }
 
 // highlight is what a step points at: Focus lines [from, to] get a
@@ -646,7 +647,7 @@ type painter struct {
 // layout walks every row; it draws into img unless nil, and returns
 // the total height.
 func (p *painter) layout(img *image.RGBA) int {
-	y := margin
+	y := 0
 	p.wraps, p.heads = 0, nil
 
 	for i, f := range p.listing.Files {
@@ -654,7 +655,7 @@ func (p *painter) layout(img *image.RGBA) int {
 			p.fileHeader(img, y, f)
 			p.heads = append(p.heads, y)
 		}
-		y += fileRowH
+		y += bodyTop
 		if i == 0 {
 			y += p.top // the header stays on top, the code moves
 		}
@@ -875,7 +876,7 @@ func (p *painter) surround(img *image.RGBA, f *codeFile, h *hunk,
 	top, bottom int) {
 
 	first, last := h.Lines[0].Pos, h.Lines[len(h.Lines)-1].Pos
-	above := img.SubImage(image.Rect(0, margin+fileRowH, frameW, top))
+	above := img.SubImage(image.Rect(0, bodyTop, frameW, top))
 	below := img.SubImage(image.Rect(0, bottom, frameW, img.Rect.Max.Y))
 
 	// Drawn into the sub-images: rows cut by an edge clip there

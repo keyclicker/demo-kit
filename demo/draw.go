@@ -387,7 +387,7 @@ func (b *builder) drawnVideo(ctx context.Context, n int, shots shots,
 
 // view is s's frame: its view's rows, straight out of the picture (a
 // frameW-wide RGBA's rows are contiguous), or a copy with the header
-// scrolled past pinned on top, over a margin of background.
+// scrolled past pinned on top, a margin of background under it.
 func view(s shot) []byte {
 	stride := s.img.Stride
 	rows := s.img.Pix[s.y*stride : (s.y+frameH)*stride]
@@ -400,23 +400,25 @@ func view(s shot) []byte {
 	frame := slices.Clone(rows)
 	bg := image.NewRGBA(image.Rect(0, 0, frameW, 1))
 	fill(bg, 0, 0, frameW, 1, colBG)
-	for r := range max(at, 0) {
-		copy(frame[r*stride:], bg.Pix)
-	}
-	for r := max(at, 0); r < at+fileRowH; r++ {
-		src := (head + r - at) * stride
-		copy(frame[r*stride:(r+1)*stride], s.img.Pix[src:src+stride])
+
+	for r := max(at, 0); r < at+bodyTop; r++ {
+		if r < at+fileRowH {
+			src := (head + r - at) * stride
+			copy(frame[r*stride:(r+1)*stride], s.img.Pix[src:src+stride])
+		} else {
+			copy(frame[r*stride:], bg.Pix)
+		}
 	}
 	return frame
 }
 
 // pinned is where a view at y pins its sticky header: the last of heads
-// scrolled above its resting row (margin), drawn from frame row at,
-// pushed up by the next header as it arrives. ok is false for none.
+// scrolled above the frame's top, drawn from frame row at (0), pushed
+// up by the next header as it arrives. ok is false for none.
 func pinned(heads []int, y int) (head, at int, ok bool) {
 	i := -1
 	for k, h := range heads {
-		if h-y < margin {
+		if h < y {
 			i = k
 		}
 	}
@@ -424,9 +426,8 @@ func pinned(heads []int, y int) (head, at int, ok bool) {
 		return 0, 0, false
 	}
 
-	at = margin
 	if i+1 < len(heads) {
-		at = min(at, heads[i+1]-y-margin-fileRowH)
+		at = min(0, heads[i+1]-y-bodyTop)
 	}
 	return heads[i], at, at+fileRowH > 0
 }

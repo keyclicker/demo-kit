@@ -80,17 +80,19 @@ func TestView(t *testing.T) {
 }
 
 func TestPinned(t *testing.T) {
-	heads := []int{margin, 2000}
+	heads := []int{0, 2000}
 	for _, tc := range []struct {
 		y, head, at int
 		ok          bool
 	}{
-		{0, 0, 0, false},                                   // at rest: the real one
-		{500, margin, margin, true},                        // scrolled past: pinned
-		{2000 - 2*margin - fileRowH, margin, margin, true}, // next touches
-		{2000 - margin - fileRowH, margin, 0, true},        // pushed up
-		{2000 - margin, 0, 0, false},                       // the next at rest
-		{2100, 2000, margin, true},                         // the next pinned
+		{0, 0, 0, false},                               // at rest: the real one
+		{500, 0, 0, true},                              // scrolled past: pinned
+		{2000 - bodyTop, 0, 0, true},                   // the next touches it
+		{2000 - bodyTop + 10, 0, -10, true},            // pushed up
+		{2000 - fileRowH, 0, fileRowH - bodyTop, true}, // half out
+		{2000 - margin, 0, 0, false},                   // pushed out
+		{2000, 0, 0, false},                            // the next at rest
+		{2100, 2000, 0, true},                          // the next pinned
 	} {
 		head, at, ok := pinned(heads, tc.y)
 		if ok != tc.ok || ok && (head != tc.head || at != tc.at) {
@@ -100,20 +102,20 @@ func TestPinned(t *testing.T) {
 	}
 }
 
-// Scrolled down, the frame's top shows the header, not the code there
+// Scrolled down, the frame's top shows the header and a margin, not
+// the code there
 func TestViewPinsHeader(t *testing.T) {
 	img := newCanvas(3 * frameH)
 	fill(img, 0, frameH, frameW, 2*frameH, colText) // "code" below
-	fill(img, 0, margin, frameW, fileRowH, colFileBG)
+	fill(img, 0, 0, frameW, fileRowH, colFileBG)
 
-	b := view(shot{img: img, heads: []int{margin}, y: frameH, n: 1})
+	b := view(shot{img: img, heads: []int{0}, y: frameH, n: 1})
 	px := func(row int) color.RGBA {
 		i := row * img.Stride
 		return color.RGBA{b[i], b[i+1], b[i+2], b[i+3]}
 	}
-	if px(0) != colBG || px(margin) != colFileBG ||
-		px(margin+fileRowH) != colText {
-		t.Fatalf("rows: %v %v %v", px(0), px(margin), px(margin+fileRowH))
+	if px(0) != colFileBG || px(fileRowH) != colBG || px(bodyTop) != colText {
+		t.Fatalf("rows: %v %v %v", px(0), px(fileRowH), px(bodyTop))
 	}
 	if img.RGBAAt(0, frameH) != colText {
 		t.Fatal("pinning drew on the picture")
