@@ -32,7 +32,7 @@ func cmdFrames(args []string) error {
 	every := fs.Float64("every", 0, "seconds between frames (default: "+
 		"about 20 frames)")
 	out := fs.StringP("out", "o", "", "PNG to write (default "+
-		"~/tmp/demo/<demo>-frames.png)")
+		"demo.scratch/<demo>-frames.png)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: demo frames [flags] VIDEO\n")
@@ -102,7 +102,7 @@ func frameTimes(length, step float64) []float64 {
 	return times
 }
 
-// sheetPath is ~/tmp/demo/<name>-frames.png: a demo.mp4 is named for its
+// sheetPath is demo.scratch/<name>-frames.png: a demo.mp4 is named for its
 // folder, any other video (a preview, a recording) for itself.
 func sheetPath(video string) (string, error) {
 	dir, err := scratchDir()
