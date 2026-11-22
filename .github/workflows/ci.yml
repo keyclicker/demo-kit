@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Tools the tests use
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg git
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test ./...
+
+  # install.sh on each supported family, in a fresh container: package
+  # names, repos (RPM Fusion), the build, and that every tool is there
+  install:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [debian:13, ubuntu:24.04, fedora:latest, archlinux:latest]
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./install.sh --yes
+      - run: .github/verify-install.sh

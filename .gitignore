@@ -1,0 +1,4 @@
+# go build ./cmd/<bin> at the root drops binaries here
+/desk
+/demo
+/deskview
