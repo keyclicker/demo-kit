@@ -21,7 +21,7 @@ Status: **draft for review**. Nothing is moved yet.
 
 ## Non-goals (for now)
 
-- Tailscale or any other exposure: `desk serve` binds to loopback, the user
+- Tailscale or any other exposure: `deskview` binds to loopback, the user
   runs `tailscale serve` (or a reverse proxy) by hand.
 - Wayland as a display backend. `desk` displays are their own Xvnc servers,
   so they work on Wayland machines as is (see [Platforms](#platforms)).
@@ -35,8 +35,8 @@ Status: **draft for review**. Nothing is moved yet.
 | `demo/`       | `cmd/demo`, `internal/demo/…`  | key from env, paths from config |
 | `desk/`       | `cmd/desk`, `internal/desk/…`  | runtime dir, encoder fallback  |
 | `chromium/`   | `desk browser`                 | Flatpak glue dropped           |
-| desktops page | `desk serve`                   | page, API, VNC proxy, noVNC    |
-| `audio/`      | `desk serve` audio stream      | optional                       |
+| desktops page | `cmd/deskview`, `internal/view` | page, API, VNC proxy, noVNC    |
+| `audio/`      | `internal/audio` (`deskview`)  | optional                       |
 | `skills/`     | `skills/`                      | generic wording, config paths  |
 
 Stays private: the home page server, the health watchdog, the virtual
@@ -45,28 +45,39 @@ config (documented as an example instead).
 
 ## Layout
 
-One Go module, two binaries:
+One Go module, three binaries:
+
+| Binary     | Does                                         | Needs           |
+| ---------- | -------------------------------------------- | --------------- |
+| `desk`     | displays, recording, `desk browser`          | Xvnc, ffmpeg    |
+| `demo`     | `build`, `code`, `frames`, `say`, `voices`   | ffmpeg, the key |
+| `deskview` | `/desktops` page, VNC proxy, audio, `/files/` | `desk`          |
 
 ```
-cmd/desk/            desk CLI: new, ls, rm, rec, claim, release,
-                     browser, serve
+cmd/desk/            desk CLI: new, ls, rm, rec, claim, release, browser
 cmd/demo/            demo CLI: build, code, frames, say, voices
+cmd/deskview/        deskview server
 internal/config/     config.toml loading, defaults, path expansion
 internal/paths/      XDG dirs and the one publish-URL helper
 internal/desk/       displays, registry, ownership, recording
 internal/browser/    Chromium launcher (desk browser)
-internal/serve/      HTTP server: page, /api/desktops, VNC proxy,
-                     /files/, mounts internal/audio
-internal/serve/web/  the desktops page and vendored noVNC (embedded)
+internal/view/       HTTP: page, /api/desktops, VNC proxy, /files/,
+                     mounts internal/audio
+internal/view/web/   the desktops page and vendored noVNC (embedded)
 internal/audio/      PipeWire capture and PCM broadcaster
 internal/demo/…      build, code drawing, speech, frames
 skills/              agent skills, linked by install.sh
 install.sh
 ```
 
-`desk serve` and audio are separate packages but one binary: serve reads the
-desk registry in-process instead of shelling out to `desk ls --json`, and
-users install and run one thing.
+Why one module, not three: all binaries share `internal/config` and
+`internal/paths`. Separate modules would turn those into a fourth module
+plus `go.work` and per-module version tags, for no gain: nobody imports
+these as libraries, and Go compiles only what each binary imports.
+
+`deskview` lists displays through `desk ls --json`, the stable contract
+between the two, not `desk`'s internals. `install.sh` can build any subset
+of the binaries.
 
 ## Config
 
@@ -89,7 +100,7 @@ dir = "~/.local/share/demo-kit/demos"
 voice = "Umbriel"
 sink = ""                   # where `demo say` plays; "" = default output
 
-[serve]
+[deskview]
 addr = "127.0.0.1:8737"
 host_vnc = ""               # e.g. "127.0.0.1:5900": an extra, interactive
                             # tab for the host's own display
@@ -97,7 +108,7 @@ audio = true
 audio_sink = ""             # sink whose monitor is streamed; "" = default
 
 [publish]
-root = "~/.local/share/demo-kit"   # served by desk serve at /files/
+root = "~/.local/share/demo-kit"   # served by deskview at /files/
 url = ""                    # public base URL of /files/; "" = print paths
                             # only, no links
 
@@ -121,7 +132,7 @@ dir = "~/public/recordings"
 dir = "~/public/demos"
 sink = "desktop-speaker"
 
-[serve]
+[deskview]
 host_vnc = "127.0.0.1:5900"
 audio_sink = "desktop-speaker"
 
@@ -165,17 +176,17 @@ as a transient systemd user unit, owned by the agent process that made it.
 - `:0` commands (`claim`, `release`, `rec :0`) need an X11 session; on
   Wayland they fail with a clear message.
 
-### desk serve
+### deskview
 
 One loopback HTTP server, run by a systemd user unit that `install.sh`
 offers to enable.
 
 - `/desktops`: the page. One noVNC tab per desk display (view-only), plus
-  `[serve] host_vnc` (interactive) when set.
+  `[deskview] host_vnc` (interactive) when set.
 - `/api/desktops`: what `desk ls --json` prints.
 - `/vnc/<display>`: WebSocket ↔ VNC TCP proxy in Go. Replaces the
   `websockify` package.
-- noVNC: its JS client is vendored into `internal/serve/web/novnc/` with its
+- noVNC: its JS client is vendored into `internal/view/web/novnc/` with its
   MPL-2.0 license and embedded with `go:embed`. Replaces the distro `novnc`
   package, whose name and paths differ per distro.
 - `/files/`: `[publish] root`, read-only, dot-names hidden.
@@ -215,15 +226,15 @@ ships as an optional extra: only recordings of interactive programs need it,
 
 ## Install
 
-`./install.sh [--yes] [--no-deps]`, from a clone:
+`./install.sh [--yes] [--no-deps] [--only desk,demo,deskview]`, from a clone:
 
 1. Detect the family from `/etc/os-release` `ID` / `ID_LIKE`.
 2. Install packages with sudo. Fedora needs RPM Fusion (`ffmpeg`), RHEL
    also EPEL (`xfwm4`, TigerVNC): asked before enabling.
 3. Check Go: 1.21+ fetches the required toolchain by itself
    (`GOTOOLCHAIN=auto`); older (Debian 12) stops with instructions.
-4. `go build` `desk` and `demo` into `~/.local/bin`.
-5. Offer: enable the `desk serve` user unit, write a default config, link
+4. `go build` the chosen binaries (default: all three) into `~/.local/bin`.
+5. Offer: enable the `deskview` user unit, write a default config, link
    skills into `~/.claude/skills` and `~/.codex/skills`.
 
 | Need            | Debian/Ubuntu                | Fedora/RHEL              | Arch        |
@@ -261,7 +272,7 @@ Each step is one PR.
 2. History import, privacy rewrite, squash. Code builds as is.
 3. One module, `internal/config`, `internal/paths`, XDG defaults, env key.
 4. `desk` portability: runtime dir, render node and encoder fallbacks.
-5. `desk serve`: page, API, VNC proxy, embedded noVNC, `/files/`, audio.
+5. `deskview`: page, API, VNC proxy, embedded noVNC, `/files/`, audio.
 6. `desk browser`.
 7. `install.sh` and CI (build, tests, per-family install check).
 8. Skills.
