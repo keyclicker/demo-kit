@@ -244,15 +244,18 @@ ships as an optional extra: only recordings of interactive programs need it,
 | Recording       | `ffmpeg`                     | `ffmpeg` (RPM Fusion)    | `ffmpeg`    |
 | Input, shots    | `xdotool scrot imagemagick`  | `xdotool scrot ImageMagick` | `xdotool scrot imagemagick` |
 | Audio, optional | `pipewire-bin`               | `pipewire-utils`         | `pipewire`  |
-| Browser         | see below                    | `chromium`               | `chromium`  |
+| Browser         | `chromium`; Ubuntu: Flathub  | `chromium`               | `chromium`  |
 | Build           | `golang-go git`              | `golang git`             | `go git`    |
 
 Package names get verified in CI containers per family.
 
 Chromium is required: `desk browser` and the browser skills need it, and
-later HTML scenes will too. Debian has a `chromium` deb; Ubuntu ships only
-the snap (open: snap, Flathub or Google Chrome's deb repo). `install.sh`
-writes the binary it installed into the default `[browser] command`.
+later HTML scenes will too. Debian, Fedora and Arch get their native package.
+Ubuntu ships only a snap, so it gets Flathub's `org.chromium.Chromium`
+(user scope) plus
+`flatpak override --user --filesystem=xdg-cache/demo-kit org.chromium.Chromium`
+for the profiles. No snap, no Google Chrome. `install.sh` writes what it
+installed into the default `[browser] command`.
 
 ## Platforms
 
