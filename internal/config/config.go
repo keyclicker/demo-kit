@@ -24,6 +24,11 @@
 //	voice = "Umbriel"                           # default voice
 //	sink = ""                                   # demo say's output; "" = default
 //
+//	[deskview]
+//	addr = "127.0.0.1:8737"                     # listen address
+//	audio = true                                # stream sound to the page
+//	audio_sink = ""                             # sink to stream; "" = default
+//
 //	[publish]
 //	root = "~/.local/share/demo-kit"            # the dir served at url
 //	url = ""                                    # base URL; "" = no links
@@ -37,6 +42,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -52,11 +58,12 @@ import (
 
 // Config is the whole file, defaults filled in.
 type Config struct {
-	Desk    Desk    `toml:"desk"`
-	Video   Video   `toml:"video"`
-	Record  Record  `toml:"record"`
-	Demo    Demo    `toml:"demo"`
-	Publish Publish `toml:"publish"`
+	Desk     Desk     `toml:"desk"`
+	Video    Video    `toml:"video"`
+	Record   Record   `toml:"record"`
+	Demo     Demo     `toml:"demo"`
+	Deskview Deskview `toml:"deskview"`
+	Publish  Publish  `toml:"publish"`
 }
 
 // Desk configures desk's displays.
@@ -110,6 +117,21 @@ type Demo struct {
 	// Sink is the PipeWire sink `demo say` plays on; "" is the default
 	// output.
 	Sink string `toml:"sink"`
+}
+
+// Deskview configures the viewer: one web page with every display.
+type Deskview struct {
+	// Addr is where it listens, host:port. Keep it on loopback and put
+	// a proxy or tunnel with auth in front: it can show the host display
+	// interactive.
+	Addr string `toml:"addr"`
+
+	// Audio streams a PipeWire sink's sound to the page's 🔊 button.
+	Audio bool `toml:"audio"`
+
+	// AudioSink is the sink whose monitor is streamed; "" is the default
+	// output.
+	AudioSink string `toml:"audio_sink"`
 }
 
 // Publish maps local files to the URL they're reachable at. Serving them
@@ -201,7 +223,8 @@ func Defaults() (Config, error) {
 			Scratch: filepath.Join(cache, "scratch"),
 			Voice:   "Umbriel",
 		},
-		Publish: Publish{Root: data},
+		Deskview: Deskview{Addr: "127.0.0.1:8737", Audio: true},
+		Publish:  Publish{Root: data},
 	}, nil
 }
 
@@ -254,6 +277,10 @@ func (c *Config) resolve() error {
 		!filepath.IsAbs(node) {
 		return fmt.Errorf("video.render_node: %q: want auto, \"\" or a "+
 			"/dev/dri path", node)
+	}
+
+	if _, _, err := net.SplitHostPort(c.Deskview.Addr); err != nil {
+		return fmt.Errorf("deskview.addr: %q: want host:port", c.Deskview.Addr)
 	}
 
 	if c.Publish.URL != "" {

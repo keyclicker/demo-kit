@@ -185,10 +185,13 @@ as a transient systemd user unit, owned by the agent process that made it.
 One loopback HTTP server, run by a systemd user unit that `install.sh`
 offers to enable.
 
-- `/desktops`: the page. One noVNC tab per desk display (view-only), plus
-  `[desk] host_vnc` (interactive) when set.
-- `/api/desktops`: what `desk ls --json` prints.
-- `/vnc/<display>`: WebSocket ↔ VNC TCP proxy in Go. Replaces the
+- `/`: the page. One noVNC tab per desk display (view-only), plus
+  `[desk] host_vnc` (interactive) when set. Every URL in it is relative, so
+  it works under a path prefix (`tailscale serve --set-path /desktops`).
+- `/api/desktops`: what `desk ls --json` prints; `/api/audio`: whether 🔊
+  works, and why not.
+- `/vnc/<token>`: WebSocket ↔ VNC TCP proxy in Go, only to displays desk
+  lists, same-origin only (`X-Forwarded-Host` counts). Replaces the
   `websockify` package.
 - noVNC: its JS client is vendored into `cmd/deskview/web/novnc/` with its
   MPL-2.0 license and embedded with `go:embed`. Replaces the distro `novnc`

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>demo-kit desktops</title>
+    <title>desktops · demo-kit</title>
     <style>
       /* Always dark: it frames desktops, not a page. */
       :root {
@@ -83,33 +83,29 @@
     </style>
   </head>
   <body>
-    <!-- One live noVNC per desktop, listed by hub's /api/desktops
-         (`desk ls -json`) and re-polled, so agent desktops come and go
+    <!-- One live noVNC per desktop, listed by deskview's api/desktops
+         (`desk ls --json`) and re-polled, so agent desktops come and go
          as tabs. Tabs only toggle which one shows, so switching never
-         reconnects. :0 opens interactive; desk's agent desktops are
-         view-only (their Xvnc ignores VNC input too). `view_only` is
-         explicit, so noVNC's saved toggle never leaks across them.
-         For real work on :0, use Moonlight. -->
+         reconnects. The host display opens interactive; desk's agent
+         desktops are view-only (their Xvnc ignores VNC input too).
+         `view_only` is explicit, so noVNC's saved toggle never leaks
+         across them. Every URL is relative: deskview may sit under a
+         path prefix. -->
     <nav>
       <button class="end" id="control" aria-pressed="false">🖱 control</button>
-      <button id="sound" aria-pressed="false"
-              title=":0's sound (desktop-speaker), streamed by deskaudio">🔇 sound</button>
-      <a id="sunshine" href="#">sunshine</a>
+      <button id="sound" aria-pressed="false" disabled
+              title="checking for sound…">🔇 sound</button>
     </nav>
 
     <script>
       const nav = document.querySelector("nav");
-      const sunshine = document.getElementById("sunshine");
-
-      // Sunshine's web UI, proxied by tailscale serve for a valid cert.
-      sunshine.href = `https://${location.hostname}:47991/`;
-
       // token → { tab, frame }, in display order
       const desks = new Map();
 
       function vncURL(desk) {
-        const path = encodeURIComponent(`desktop/websockify?token=${desk.token}`);
-        return "desktop/vnc.html?autoconnect=true&reconnect=true" +
+        // noVNC resolves path against vnc.html: novnc/../vnc/N
+        const path = encodeURIComponent(`../vnc/${desk.token}`);
+        return "novnc/vnc.html?autoconnect=true&reconnect=true" +
           `&resize=scale&view_only=${desk.viewOnly}&path=${path}`;
       }
 
@@ -119,7 +115,7 @@
         tab.href = "#" + desk.token;
         tab.textContent = desk.viewOnly
           ? `Agent · ${desk.display}`
-          : `Main · ${desk.display}`;
+          : `Host · ${desk.display}`;
 
         const frame = document.createElement("iframe");
         frame.title = `Desktop ${desk.display}`;
@@ -131,7 +127,7 @@
         nav.insertBefore(tab, next ? desks.get(next).tab : controlButton);
         document.body.append(frame);
 
-        // :0 takes input by default; agent desktops ignore it anyway
+        // The host display takes input by default; agent desktops ignore it
         const entry = { tab, frame, viewOnly: desk.viewOnly, control: !desk.viewOnly };
         frame.addEventListener("load", () => {
           applyControl(entry);
@@ -141,15 +137,17 @@
       }
 
       // Owner on hover: an agent desktop's creator, or the agent that
-      // claimed :0.
+      // claimed the host display.
       function tabTitle(desk) {
         const who = desk.owner ? `${desk.owner.name} ${desk.owner.pid}` : null;
         if (desk.viewOnly) return `view-only · owner: ${who ?? "unknown"}`;
         return who ? `claimed by ${who}` : "";
       }
 
-      // Match tabs to the desktop list; true if anything changed.
-      function sync(list) {
+      // Match tabs to the desktop list; true if anything changed. Only
+      // displays with a VNC address can be shown.
+      function sync(all) {
+        const list = all.filter((d) => d.vnc);
         const live = new Set(list.map((d) => d.token));
         let changed = false;
 
@@ -237,15 +235,15 @@
 
       async function poll() {
         try {
-          const res = await fetch("/api/desktops", { cache: "no-store" });
+          const res = await fetch("api/desktops", { cache: "no-store" });
           if (res.ok && sync(await res.json())) show();
         } catch {
-          // hub unreachable: keep the tabs we have
+          // deskview unreachable: keep the tabs we have
         }
       }
 
-      // ---- :0 sound -------------------------------------------------
-      // VNC has no audio. deskaudio streams :0's desktop-speaker sink
+      // ---- sound ----------------------------------------------------
+      // VNC has no audio. deskview streams a PipeWire sink
       // as raw s16le PCM; a worklet plays it, holding ~80 ms of buffer.
 
       const worklet = `
@@ -305,7 +303,7 @@
       async function pump(node, signal) {
         while (!signal.aborted) {
           try {
-            const res = await fetch("/desktop-audio/stream", { signal, cache: "no-store" });
+            const res = await fetch("audio/stream", { signal, cache: "no-store" });
             const reader = res.body.getReader();
             let rest = new Uint8Array(0); // bytes of a split sample
 
@@ -326,7 +324,7 @@
               node.port.postMessage(out, [out.buffer]);
             }
           } catch {
-            // aborted, or deskaudio unreachable: retry below
+            // aborted, or deskview unreachable: retry below
           }
           if (!signal.aborted) await new Promise((r) => setTimeout(r, 1000));
         }
@@ -371,9 +369,21 @@
 
       addEventListener("hashchange", show);
 
-      // :0 first, so the page works even while hub is down
-      sync([{ display: ":0", token: "0", viewOnly: false }]);
-      show();
+      // No PipeWire (or audio off): the button stays, disabled, saying why
+      async function checkSound() {
+        try {
+          const res = await fetch("api/audio", { cache: "no-store" });
+          const audio = await res.json();
+          soundButton.disabled = !audio.available;
+          soundButton.title = audio.available
+            ? "the session's sound, streamed by deskview"
+            : `no sound: ${audio.reason}`;
+        } catch {
+          soundButton.title = "no sound: deskview unreachable";
+        }
+      }
+
+      checkSound();
       poll();
       setInterval(poll, 3000);
     </script>
