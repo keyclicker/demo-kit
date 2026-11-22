@@ -1,0 +1,13 @@
+# deskview: the desk displays page. install.sh copies this to
+# ~/.config/systemd/user/; it listens on deskview.addr (loopback).
+[Unit]
+Description=deskview, watch desk displays in a browser
+After=pipewire.service
+
+[Service]
+ExecStart=%h/.local/bin/deskview
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
