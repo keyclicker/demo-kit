@@ -15,7 +15,32 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/keyclicker/demo-kit/internal/encode"
 )
+
+// encoder is how recordings encode, picked once per process: VAAPI
+// costs ~4% of a core at 30 fps, x264 veryfast ~50%.
+var encoder = sync.OnceValues(func() (encode.Encoder, error) {
+	return encode.Pick(cfg.Video)
+})
+
+// recordFilter converts screen RGB to what plays everywhere: nv12 or
+// yuv420p, even sides, tagged BT.709 limited range. Left alone, the RGB
+// source's tags (pc, gbr) stick to YUV frames, and players guess colors.
+func recordFilter(enc encode.Encoder) string {
+	if enc.VAAPI() {
+		return "hwupload," +
+			"scale_vaapi=w=trunc(iw/2)*2:h=trunc(ih/2)*2:format=nv12:" +
+			"out_range=tv:out_color_matrix=bt709:" +
+			"out_color_primaries=bt709:out_color_transfer=bt709"
+	}
+
+	return "scale=trunc(iw/2)*2:trunc(ih/2)*2:" +
+		"out_range=tv:out_color_matrix=bt709,format=yuv420p," +
+		"setparams=range=tv:colorspace=bt709:color_primaries=bt709:" +
+		"color_trc=bt709"
+}
 
 // recordingPath names a recording of display n started now, in
 // record.dir.
@@ -43,22 +68,20 @@ func startSegment(display, path string, env []string) (*segment, error) {
 		return nil, err
 	}
 
-	// Encode on the 890M (VAAPI), color conversion included: ~4% of a
-	// core at 30 fps, vs ~50% for libx264 veryfast
-	cmd := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
-		"-nostats", "-progress", "pipe:1", "-y",
-		"-vaapi_device", renderNode,
-		"-f", "x11grab", "-framerate", "30", "-i", display,
+	enc, err := encoder()
+	if err != nil {
+		return nil, err
+	}
 
-		// nv12 (yuv420p) plays everywhere but needs even sides. Tagged
-		// BT.709 limited range: left alone, the RGB source's tags (pc,
-		// gbr) stick to YUV frames, and players guess colors
-		"-vf", "hwupload,"+
-			"scale_vaapi=w=trunc(iw/2)*2:h=trunc(ih/2)*2:format=nv12:"+
-			"out_range=tv:out_color_matrix=bt709:"+
-			"out_color_primaries=bt709:out_color_transfer=bt709",
-		"-c:v", "h264_vaapi", "-qp", "28",
-		"-movflags", "+faststart", path)
+	args := []string{"-nostdin", "-loglevel", "error",
+		"-nostats", "-progress", "pipe:1", "-y"}
+	args = append(args, enc.Device()...)
+	args = append(args, "-f", "x11grab", "-framerate", "30", "-i", display,
+		"-vf", recordFilter(enc))
+	args = append(args, enc.Codec(28)...)
+	args = append(args, "-movflags", "+faststart", path)
+
+	cmd := exec.Command("ffmpeg", args...)
 	cmd.Env = env
 	cmd.Stderr = os.Stderr
 
