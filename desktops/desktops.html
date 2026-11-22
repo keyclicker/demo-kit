@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>demo-kit desktops</title>
+    <style>
+      /* Always dark: it frames desktops, not a page. */
+      :root {
+        color-scheme: dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #e5e5e5;
+        background: #1a1a1a;
+        font-size: 13px;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+
+      nav {
+        display: flex;
+        gap: 4px;
+        padding: 2px 8px;
+        background: #242424;
+        border-bottom: 1px solid #333333;
+      }
+
+      nav a {
+        padding: 2px 12px;
+        color: #999999;
+        font-weight: 500;
+        text-decoration: none;
+        border-radius: 6px;
+      }
+
+      nav a[aria-current] {
+        color: #ffffff;
+        background: #3a3a3a;
+      }
+
+      nav .end {
+        margin-left: auto;
+      }
+
+      nav button {
+        padding: 2px 12px;
+        color: #999999;
+        font: inherit;
+        font-weight: 500;
+        background: none;
+        border: 0;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+
+      nav button:disabled {
+        color: #555555;
+        cursor: default;
+      }
+
+      nav button[aria-pressed="true"] {
+        color: #ffffff;
+        background: #3a3a3a;
+      }
+
+      iframe {
+        flex: 1;
+        width: 100%;
+        border: 0;
+      }
+
+      iframe[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- One live noVNC per desktop, listed by hub's /api/desktops
+         (`desk ls -json`) and re-polled, so agent desktops come and go
+         as tabs. Tabs only toggle which one shows, so switching never
+         reconnects. :0 opens interactive; desk's agent desktops are
+         view-only (their Xvnc ignores VNC input too). `view_only` is
+         explicit, so noVNC's saved toggle never leaks across them.
+         For real work on :0, use Moonlight. -->
+    <nav>
+      <button class="end" id="control" aria-pressed="false">🖱 control</button>
+      <button id="sound" aria-pressed="false"
+              title=":0's sound (desktop-speaker), streamed by deskaudio">🔇 sound</button>
+      <a id="sunshine" href="#">sunshine</a>
+    </nav>
+
+    <script>
+      const nav = document.querySelector("nav");
+      const sunshine = document.getElementById("sunshine");
+
+      // Sunshine's web UI, proxied by tailscale serve for a valid cert.
+      sunshine.href = `https://${location.hostname}:47991/`;
+
+      // token → { tab, frame }, in display order
+      const desks = new Map();
+
+      function vncURL(desk) {
+        const path = encodeURIComponent(`desktop/websockify?token=${desk.token}`);
+        return "desktop/vnc.html?autoconnect=true&reconnect=true" +
+          `&resize=scale&view_only=${desk.viewOnly}&path=${path}`;
+      }
+
+      // Add a tab and a live noVNC frame for a new desktop.
+      function add(desk) {
+        const tab = document.createElement("a");
+        tab.href = "#" + desk.token;
+        tab.textContent = desk.viewOnly
+          ? `Agent · ${desk.display}`
+          : `Main · ${desk.display}`;
+
+        const frame = document.createElement("iframe");
+        frame.title = `Desktop ${desk.display}`;
+        frame.src = vncURL(desk);
+        frame.hidden = true;
+
+        // Keep tabs sorted by display number
+        const next = [...desks.keys()].find((t) => Number(t) > Number(desk.token));
+        nav.insertBefore(tab, next ? desks.get(next).tab : controlButton);
+        document.body.append(frame);
+
+        // :0 takes input by default; agent desktops ignore it anyway
+        const entry = { tab, frame, viewOnly: desk.viewOnly, control: !desk.viewOnly };
+        frame.addEventListener("load", () => {
+          applyControl(entry);
+          applyBell(entry);
+        });
+        desks.set(desk.token, entry);
+      }
+
+      // Owner on hover: an agent desktop's creator, or the agent that
+      // claimed :0.
+      function tabTitle(desk) {
+        const who = desk.owner ? `${desk.owner.name} ${desk.owner.pid}` : null;
+        if (desk.viewOnly) return `view-only · owner: ${who ?? "unknown"}`;
+        return who ? `claimed by ${who}` : "";
+      }
+
+      // Match tabs to the desktop list; true if anything changed.
+      function sync(list) {
+        const live = new Set(list.map((d) => d.token));
+        let changed = false;
+
+        for (const [token, { tab, frame }] of desks) {
+          if (!live.has(token)) {
+            tab.remove();
+            frame.remove();
+            desks.delete(token);
+            changed = true;
+          }
+        }
+
+        for (const desk of list) {
+          if (!desks.has(desk.token)) {
+            add(desk);
+            changed = true;
+          }
+          desks.get(desk.token).tab.title = tabTitle(desk);
+        }
+
+        // Map order follows insertion; re-sort for the fallback tab
+        const sorted = [...desks].sort(([a], [b]) => a - b);
+        desks.clear();
+        for (const [token, entry] of sorted) desks.set(token, entry);
+
+        return changed;
+      }
+
+      // Show the desktop named by the hash, else the first one.
+      function show() {
+        if (desks.size === 0) return;
+
+        const wanted = location.hash.slice(1);
+        const name = desks.has(wanted) ? wanted : desks.keys().next().value;
+
+        for (const [token, { tab, frame }] of desks) {
+          frame.hidden = token !== name;
+          if (token === name) {
+            current = token;
+            tab.setAttribute("aria-current", "true");
+          } else {
+            tab.removeAttribute("aria-current");
+          }
+        }
+        desks.get(name).frame.focus();
+        renderControl();
+      }
+
+      // ---- control (view-only) toggle ---------------------------------
+      // noVNC's own toggle hides in its sidebar. Frames share our origin,
+      // so flip its checkbox directly: live, no reconnect. Agent desktops'
+      // Xvnc ignores VNC input (-Accept*=0), so their toggle stays off.
+
+      const controlButton = document.getElementById("control");
+      let current = null; // token of the shown desktop
+
+      // Push an entry's control state into its noVNC frame.
+      function applyControl(entry) {
+        const box = entry.frame.contentDocument?.getElementById("noVNC_setting_view_only");
+        if (!box || box.checked === !entry.control) return;
+
+        box.checked = !entry.control;
+        box.dispatchEvent(new Event("change"));
+      }
+
+      function renderControl() {
+        const entry = desks.get(current);
+        if (!entry) return;
+
+        controlButton.disabled = entry.viewOnly;
+        controlButton.title = entry.viewOnly
+          ? "agent desktop: its VNC ignores input"
+          : "send mouse and keyboard to this desktop";
+        controlButton.setAttribute("aria-pressed", String(entry.control));
+        controlButton.textContent = entry.control ? "🖱 control" : "👁 view only";
+      }
+
+      controlButton.addEventListener("click", () => {
+        const entry = desks.get(current);
+        entry.control = !entry.control;
+        applyControl(entry);
+        renderControl();
+        entry.frame.focus();
+      });
+
+      async function poll() {
+        try {
+          const res = await fetch("/api/desktops", { cache: "no-store" });
+          if (res.ok && sync(await res.json())) show();
+        } catch {
+          // hub unreachable: keep the tabs we have
+        }
+      }
+
+      // ---- :0 sound -------------------------------------------------
+      // VNC has no audio. deskaudio streams :0's desktop-speaker sink
+      // as raw s16le PCM; a worklet plays it, holding ~80 ms of buffer.
+
+      const worklet = `
+        class Pcm extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this.queue = [];   // interleaved stereo Float32Arrays
+            this.offset = 0;   // frames consumed of queue[0]
+            this.frames = 0;   // frames buffered
+            this.playing = false;
+            this.port.onmessage = (e) => this.push(e.data);
+          }
+
+          // Queue a chunk; past 250 ms of lag, skip back to 80 ms.
+          push(chunk) {
+            this.queue.push(chunk);
+            this.frames += chunk.length / 2;
+            if (this.frames < sampleRate * 0.25) return;
+
+            while (this.frames > sampleRate * 0.08 && this.queue.length > 1) {
+              this.frames -= this.queue.shift().length / 2 - this.offset;
+              this.offset = 0;
+            }
+          }
+
+          process(_, [[left, right]]) {
+            // After an underrun, wait for 40 ms so playback doesn't crackle
+            if (!this.playing && this.frames >= sampleRate * 0.04) this.playing = true;
+
+            for (let i = 0; i < left.length; i++) {
+              if (!this.playing || this.frames === 0) {
+                left[i] = right[i] = 0;
+                this.playing = false;
+                continue;
+              }
+
+              const chunk = this.queue[0];
+              left[i] = chunk[this.offset * 2];
+              right[i] = chunk[this.offset * 2 + 1];
+              this.frames--;
+
+              if (++this.offset * 2 >= chunk.length) {
+                this.queue.shift();
+                this.offset = 0;
+              }
+            }
+            return true;
+          }
+        }
+        registerProcessor("pcm", Pcm);
+      `;
+
+      const soundButton = document.getElementById("sound");
+      let sound = null; // { ctx, abort } while on
+
+      // Pipe the stream into the worklet until aborted; reconnect on drops.
+      async function pump(node, signal) {
+        while (!signal.aborted) {
+          try {
+            const res = await fetch("/desktop-audio/stream", { signal, cache: "no-store" });
+            const reader = res.body.getReader();
+            let rest = new Uint8Array(0); // bytes of a split sample
+
+            for (;;) {
+              const { value, done } = await reader.read();
+              if (done) break;
+
+              const bytes = new Uint8Array(rest.length + value.length);
+              bytes.set(rest);
+              bytes.set(value, rest.length);
+
+              const whole = bytes.length - (bytes.length % 4); // full frames
+              rest = bytes.slice(whole);
+
+              const pcm = new Int16Array(bytes.buffer, 0, whole / 2);
+              const out = new Float32Array(pcm.length);
+              for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] / 32768;
+              node.port.postMessage(out, [out.buffer]);
+            }
+          } catch {
+            // aborted, or deskaudio unreachable: retry below
+          }
+          if (!signal.aborted) await new Promise((r) => setTimeout(r, 1000));
+        }
+      }
+
+      async function startSound() {
+        const ctx = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
+        const url = URL.createObjectURL(new Blob([worklet], { type: "text/javascript" }));
+        await ctx.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
+
+        const node = new AudioWorkletNode(ctx, "pcm", { outputChannelCount: [2] });
+        node.connect(ctx.destination);
+
+        const abort = new AbortController();
+        sound = { ctx, abort };
+        pump(node, abort.signal);
+      }
+
+      function stopSound() {
+        sound.abort.abort();
+        sound.ctx.close();
+        sound = null;
+      }
+
+      // noVNC rings X bells with its own <audio> (same origin): beep only
+      // while 🔊 is on, like the rest of the page's sound.
+      function applyBell(entry) {
+        const bell = entry.frame.contentDocument?.getElementById("noVNC_bell");
+        if (bell) bell.muted = !sound;
+      }
+
+      // Browsers only start audio from a click, so sound is never on at load
+      soundButton.addEventListener("click", async () => {
+        if (sound) stopSound();
+        else await startSound();
+        for (const entry of desks.values()) applyBell(entry);
+
+        soundButton.setAttribute("aria-pressed", String(!!sound));
+        soundButton.textContent = sound ? "🔊 sound" : "🔇 sound";
+      });
+
+      addEventListener("hashchange", show);
+
+      // :0 first, so the page works even while hub is down
+      sync([{ display: ":0", token: "0", viewOnly: false }]);
+      show();
+      poll();
+      setInterval(poll, 3000);
+    </script>
+  </body>
+</html>
