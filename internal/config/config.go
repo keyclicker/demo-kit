@@ -15,6 +15,10 @@
 //	render_node = "auto"                        # GPU: auto, a path, ""
 //	encoder = "auto"                            # auto, vaapi, x264
 //
+//	[browser]
+//	command = ["chromium"]                      # any Chromium-family browser
+//	main_profile = "~/.config/chromium"         # --profile main
+//
 //	[record]
 //	dir = "~/.local/share/demo-kit/recordings"  # desk recordings
 //
@@ -60,6 +64,7 @@ import (
 type Config struct {
 	Desk     Desk     `toml:"desk"`
 	Video    Video    `toml:"video"`
+	Browser  Browser  `toml:"browser"`
 	Record   Record   `toml:"record"`
 	Demo     Demo     `toml:"demo"`
 	Deskview Deskview `toml:"deskview"`
@@ -94,6 +99,17 @@ type Video struct {
 	// Encoder is "vaapi" (GPU), "x264" (CPU), or "auto": VAAPI when a
 	// test encode on the render node works, else x264.
 	Encoder string `toml:"encoder"`
+}
+
+// Browser configures `desk browser`, the agents' Chromium.
+type Browser struct {
+	// Command launches the browser; desk adds the profile, the DevTools
+	// port and the display. E.g. ["flatpak", "run", "org.chromium.Chromium"].
+	Command []string `toml:"command"`
+
+	// MainProfile is the user's own profile, for `--profile main`: their
+	// accounts and settings.
+	MainProfile string `toml:"main_profile"`
 }
 
 // Record configures desk's screen recordings.
@@ -200,6 +216,11 @@ func Load() (Config, error) {
 
 // Defaults returns the config of a machine with no config file.
 func Defaults() (Config, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return Config{}, err
+	}
+
 	data, err := paths.Data()
 	if err != nil {
 		return Config{}, err
@@ -216,7 +237,11 @@ func Defaults() (Config, error) {
 			WM:          []string{"xfwm4", "--compositor=off", "--sm-client-disable"},
 			HostDisplay: ":0",
 		},
-		Video:  Video{RenderNode: "auto", Encoder: "auto"},
+		Video: Video{RenderNode: "auto", Encoder: "auto"},
+		Browser: Browser{
+			Command:     []string{"chromium"},
+			MainProfile: filepath.Join(home, ".config", "chromium"),
+		},
 		Record: Record{Dir: filepath.Join(data, "recordings")},
 		Demo: Demo{
 			Dir:     filepath.Join(data, "demos"),
@@ -239,6 +264,7 @@ func (c *Config) resolve() error {
 		{"demo.dir", &c.Demo.Dir},
 		{"demo.scratch", &c.Demo.Scratch},
 		{"publish.root", &c.Publish.Root},
+		{"browser.main_profile", &c.Browser.MainProfile},
 	}
 
 	for _, k := range keys {
@@ -260,6 +286,10 @@ func (c *Config) resolve() error {
 
 	if len(c.Desk.WM) == 0 || c.Desk.WM[0] == "" {
 		return errors.New("desk.wm: needs a command")
+	}
+
+	if len(c.Browser.Command) == 0 || c.Browser.Command[0] == "" {
+		return errors.New("browser.command: needs a command")
 	}
 
 	if d := c.Desk.HostDisplay; d != "" && !displayRE.MatchString(d) {

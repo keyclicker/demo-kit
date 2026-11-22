@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -13,7 +14,8 @@ import (
 
 // ===== Runs =====
 //
-// A run is one start: a directory in runsDir() holding small files
+// A run is one `desk browser start`: a directory in runsDir() holding
+// small files
 //
 //	profile        the profile's path
 //	temp-profile/  --profile temp's profile
@@ -26,40 +28,41 @@ import (
 // Chromium exits. A run with an unlocked lock lost its supervisor
 // (reboot, kill -9): sweepRuns removes it.
 
-// runsDir is in $HOME, not $XDG_RUNTIME_DIR: Flatpak Chromium sees
-// only $HOME, and temp profiles live in here.
+// runsDir is in the cache dir, on disk, not $XDG_RUNTIME_DIR: temp
+// profiles live in here, too big for RAM, and a sandboxed browser
+// (Flatpak) can be granted it: xdg-cache/demo-kit.
 func runsDir() string {
-	return filepath.Join(xdgDir("XDG_STATE_HOME", ".local/state"),
-		"agent-chromium")
+	return filepath.Join(cacheDir, "browser")
 }
 
-type run struct{ dir string }
+// browserRun is one run's directory.
+type browserRun struct{ dir string }
 
-func (r run) path(name string) string {
+func (r browserRun) path(name string) string {
 	return filepath.Join(r.dir, name)
 }
 
 // get reads a run file, "" if missing.
-func (r run) get(name string) string {
+func (r browserRun) get(name string) string {
 	data, _ := os.ReadFile(r.path(name))
 	return strings.TrimSpace(string(data))
 }
 
-func (r run) set(name, value string) error {
+func (r browserRun) set(name, value string) error {
 	return os.WriteFile(r.path(name), []byte(value+"\n"), 0o600)
 }
 
-func (r run) exists() bool {
+func (r browserRun) exists() bool {
 	_, err := os.Stat(r.dir)
 	return err == nil
 }
 
 // profileLabel is how status shows the profile: temp, main or a path.
-func (r run) profileLabel() string {
+func (r browserRun) profileLabel() string {
 	switch p := r.get("profile"); p {
 	case r.path("temp-profile"):
 		return "temp"
-	case mainProfile():
+	case cfg.Browser.MainProfile:
 		return "main"
 	default:
 		return p
@@ -88,29 +91,29 @@ func lockStarts() (func(), error) {
 
 // newRun creates a run, its lock already held: the caller hands it to
 // the supervisor.
-func newRun() (run, *os.File, error) {
+func newRun() (browserRun, *os.File, error) {
 	dir, err := os.MkdirTemp(runsDir(), "run-")
 	if err != nil {
-		return run{}, nil, err
+		return browserRun{}, nil, err
 	}
-	r := run{dir}
+	r := browserRun{dir}
 
 	lock, err := os.OpenFile(r.path("lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		os.RemoveAll(dir)
-		return run{}, nil, err
+		return browserRun{}, nil, err
 	}
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		lock.Close()
 		os.RemoveAll(dir)
-		return run{}, nil, err
+		return browserRun{}, nil, err
 	}
 
 	return r, lock, nil
 }
 
 // listRuns returns every run, alive or not.
-func listRuns() ([]run, error) {
+func listRuns() ([]browserRun, error) {
 	entries, err := os.ReadDir(runsDir())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -119,10 +122,10 @@ func listRuns() ([]run, error) {
 		return nil, err
 	}
 
-	var runs []run
+	var runs []browserRun
 	for _, e := range entries {
 		if e.IsDir() && strings.HasPrefix(e.Name(), "run-") {
-			runs = append(runs, run{filepath.Join(runsDir(), e.Name())})
+			runs = append(runs, browserRun{filepath.Join(runsDir(), e.Name())})
 		}
 	}
 
@@ -130,10 +133,10 @@ func listRuns() ([]run, error) {
 }
 
 // findRun returns the run on DevTools port.
-func findRun(port string) (run, error) {
+func findRun(port string) (browserRun, error) {
 	runs, err := listRuns()
 	if err != nil {
-		return run{}, err
+		return browserRun{}, err
 	}
 
 	for _, r := range runs {
@@ -142,11 +145,12 @@ func findRun(port string) (run, error) {
 		}
 	}
 
-	return run{}, fmt.Errorf("no browser on port %s (see: status)", port)
+	return browserRun{}, fmt.Errorf("no browser on port %s (see: desk "+
+		"browser status)", port)
 }
 
 // alive reports whether r's supervisor still holds its lock.
-func (r run) alive() bool {
+func (r browserRun) alive() bool {
 	lock, err := os.Open(r.path("lock"))
 	if err != nil {
 		return false
@@ -173,8 +177,8 @@ func sweepRuns() {
 
 // supervise starts the run's supervisor, detached in its own session
 // so it outlives the agent's short-lived tool-call shell. It inherits
-// lock, holding the run until Chromium exits.
-func (r run) supervise(lock *os.File, urls []string) error {
+// lock, holding the run until the browser exits.
+func (r browserRun) supervise(lock *os.File, urls []string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -187,7 +191,8 @@ func (r run) supervise(lock *os.File, urls []string) error {
 	}
 	defer logFile.Close()
 
-	cmd := exec.Command(self, append([]string{"supervise", r.dir}, urls...)...)
+	args := append([]string{"browser", "supervise", r.dir}, urls...)
+	cmd := exec.Command(self, args...)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.ExtraFiles = []*os.File{lock} // fd 3
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -199,39 +204,39 @@ func (r run) supervise(lock *os.File, urls []string) error {
 	return cmd.Process.Release()
 }
 
-// cmdSupervise runs Chromium for run DIR in the foreground, then
-// removes the run: `supervise DIR [URL...]`, from start only.
-func cmdSupervise(args []string) error {
+// cmdBrowserSupervise runs browser.command for run DIR in the
+// foreground, then removes the run: `browser supervise DIR [URL...]`,
+// from start only.
+func cmdBrowserSupervise(args []string) error {
 	if len(args) < 1 {
-		return errors.New("supervise: run dir required")
+		return errors.New("browser supervise: run dir required")
 	}
-	r := run{args[0]}
+	r := browserRun{args[0]}
 
-	// start's flock. Chromium inherits it too, so the run stays alive
+	// start's flock. The browser inherits it too, so the run stays alive
 	// while either of us does
 	lock := os.NewFile(3, "lock")
 	defer lock.Close()
 
 	profile := r.get("profile")
-	chromiumArgs := []string{
-		"run", flatpakApp,
-		"--user-data-dir=" + profile,
-		"--remote-debugging-port=" + r.get("port"),
+	command := cfg.Browser.Command
+	browserArgs := append(append([]string{}, command[1:]...),
+		"--user-data-dir="+profile,
+		"--remote-debugging-port="+r.get("port"),
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--start-maximized",
-	}
+	)
 
-	cmd := exec.Command("flatpak", append(chromiumArgs, args[1:]...)...)
+	cmd := exec.Command(command[0], append(browserArgs, args[1:]...)...)
 	cmd.Env = append(os.Environ(), "DISPLAY="+r.get("display"))
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	runErr := cmd.Run()
 
-	// flatpak run can return before Chromium does: wait for it
-	waitFor(func() bool {
-		b, _ := findBrowser(profile)
-		return b == nil
-	}, 30*time.Second)
+	// A launcher (flatpak run) may return before the browser does: the
+	// browser is gone once its DevTools port is
+	port, _ := strconv.Atoi(r.get("port"))
+	waitFor(func() bool { return !devToolsUp(port) }, 30*time.Second)
 
 	if profile == r.path("temp-profile") {
 		if err := harvestWidevine(profile); err != nil {
