@@ -1,42 +1,42 @@
-// deskaudio streams a PipeWire sink to browsers as raw PCM, so the
-// /desktops page can play :0's sound next to its noVNC view.
+// Sound for the page: VNC carries none, so a PipeWire sink's monitor is
+// captured with pw-record and streamed as raw PCM to every listener.
+// One stream for the whole login session: every display plays into it.
 package main
 
 import (
 	"context"
-	flag "github.com/spf13/pflag"
+	"errors"
 	"io"
-	"log"
 	"net/http"
 	"os/exec"
 	"strconv"
 )
 
-func main() {
-	addr := flag.String("addr", "127.0.0.1:8091", "listen address")
-	sink := flag.String("sink", "desktop-speaker", "PipeWire sink to capture")
-	flag.Parse()
-
-	b := NewBroadcaster(pwRecord(*sink))
-
-	mux := http.NewServeMux()
-	mux.Handle("GET /stream", streamHandler(b))
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		io.WriteString(w, "ok\n")
-	})
-
-	log.Printf("deskaudio: %s on %s", *sink, *addr)
-	log.Fatal(http.ListenAndServe(*addr, mux))
+// audioCheck says why the page has no sound, or nil when it has.
+func audioCheck() error {
+	if !cfg.Deskview.Audio {
+		return errors.New("off in the config (deskview.audio)")
+	}
+	if _, err := exec.LookPath("pw-record"); err != nil {
+		return errors.New("no pw-record (PipeWire)")
+	}
+	return nil
 }
 
-// pwRecord captures a sink's monitor as s16le stereo at 48 kHz.
+// pwRecord captures a sink's monitor as s16le stereo at 48 kHz; sink ""
+// is the default output.
 func pwRecord(sink string) Source {
 	return func(ctx context.Context) (io.ReadCloser, error) {
-		cmd := exec.CommandContext(ctx, "pw-record",
-			"--target", sink,
-			"-P", "{ stream.capture.sink = true node.name = deskaudio }",
+		var args []string
+		if sink != "" {
+			args = append(args, "--target", sink)
+		}
+		args = append(args,
+			"-P", "{ stream.capture.sink = true node.name = deskview }",
 			"--raw", "--format", "s16", "--rate", "48000",
 			"--channels", "2", "--latency", "20ms", "-")
+
+		cmd := exec.CommandContext(ctx, "pw-record", args...)
 
 		out, err := cmd.StdoutPipe()
 		if err != nil {
