@@ -45,3 +45,15 @@ func TestExpand(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntime(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	if got, err := Runtime(); err != nil || got != "/run/user/1000/demo-kit" {
+		t.Errorf("Runtime() = %q, %v", got, err)
+	}
+
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	if _, err := Runtime(); err == nil {
+		t.Error("Runtime() without $XDG_RUNTIME_DIR: no error")
+	}
+}

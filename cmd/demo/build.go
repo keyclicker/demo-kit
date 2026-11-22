@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keyclicker/demo-kit/internal/encode"
 )
 
 // ---- Script ----
@@ -553,20 +555,24 @@ func (b *builder) build(ctx context.Context, video string) error {
 	partial := strings.TrimSuffix(video, ".mp4") + ".partial.mp4"
 	defer os.Remove(partial)
 
-	args := []string{
-		"-vaapi_device", renderNode,
+	enc, err := encode.Pick(cfg.Video)
+	if err != nil {
+		return err
+	}
+
+	args := append(enc.Device(),
 		"-f", "concat", "-safe", "0", "-i", "video.txt",
 		"-f", "concat", "-safe", "0", "-i", "audio.txt",
 		"-f", "ffmetadata", "-i", "chapters.txt",
 		"-map", "0:v", "-map", "1:a",
-		"-map_metadata", "2", "-map_chapters", "2"}
+		"-map_metadata", "2", "-map_chapters", "2")
 
 	if b.draft {
 		// The scenes as they are: no band, no captions, no re-encode
 		args = append(args, "-c:v", "copy")
 	} else {
-		args = append(args, "-vf", finalFilter(len(b.cues) > 0),
-			"-c:v", "h264_vaapi", "-qp", "24")
+		args = append(args, "-vf", finalFilter(len(b.cues) > 0)+enc.Upload())
+		args = append(args, enc.Codec(24)...)
 	}
 
 	args = append(args, "-c:a", "aac", "-b:a", "128k",
@@ -583,7 +589,7 @@ func (b *builder) build(ctx context.Context, video string) error {
 // finalFilter is the final encode's picture: a band of its own under
 // the frame for captions, so they never hide code, and with captions
 // (none when nothing is said: libass refuses an empty file) burned in
-// on the CPU (libass), then uploaded for the GPU encode. Sizes are in
+// on the CPU (libass); the caller adds the encoder's upload. Sizes are in
 // libass units: 288 = the video's height.
 func finalFilter(captions bool) string {
 	vf := fmt.Sprintf("pad=%d:%d:0:0:color=0x0d1117", frameW,
@@ -594,7 +600,7 @@ func finalFilter(captions bool) string {
 			"MarginV=6"
 		vf += ",subtitles=captions.srt:force_style='" + style + "'"
 	}
-	return vf + ",format=nv12,hwupload"
+	return vf
 }
 
 // cutClips settles where each clip is cut: from and to (its end if

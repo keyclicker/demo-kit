@@ -5,6 +5,16 @@
 // all defaults; an unknown key is an error, so typos don't pass silently.
 // Paths may start with "~/" and must be absolute after that.
 //
+//	[desk]
+//	size = "1280x960"                           # desk new's screen
+//	wm = ["xfwm4", "--compositor=off", "--sm-client-disable"]
+//	host_display = ":0"                         # the user's own display
+//	host_vnc = ""                               # its VNC, for viewers
+//
+//	[video]
+//	render_node = "auto"                        # GPU: auto, a path, ""
+//	encoder = "auto"                            # auto, vaapi, x264
+//
 //	[record]
 //	dir = "~/.local/share/demo-kit/recordings"  # desk recordings
 //
@@ -30,6 +40,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -41,9 +52,41 @@ import (
 
 // Config is the whole file, defaults filled in.
 type Config struct {
+	Desk    Desk    `toml:"desk"`
+	Video   Video   `toml:"video"`
 	Record  Record  `toml:"record"`
 	Demo    Demo    `toml:"demo"`
 	Publish Publish `toml:"publish"`
+}
+
+// Desk configures desk's displays.
+type Desk struct {
+	// Size is the screen of `desk new` without --size, WxH.
+	Size string `toml:"size"`
+
+	// WM is the window manager command each display runs. Any EWMH
+	// window manager works; desk maximizes apps through EWMH.
+	WM []string `toml:"wm"`
+
+	// HostDisplay is the user's own X display, the one `desk claim`
+	// borrows; "" means there is none to borrow.
+	HostDisplay string `toml:"host_display"`
+
+	// HostVNC is the host display's VNC address (host:port) for
+	// viewers; "" means viewers don't show it.
+	HostVNC string `toml:"host_vnc"`
+}
+
+// Video configures H.264 encoding, shared by desk rec and demo build.
+type Video struct {
+	// RenderNode is the GPU's DRM render node: "auto" picks the first
+	// /dev/dri/renderD*, "" means no GPU. Xvnc renders GL on it, VAAPI
+	// encodes on it.
+	RenderNode string `toml:"render_node"`
+
+	// Encoder is "vaapi" (GPU), "x264" (CPU), or "auto": VAAPI when a
+	// test encode on the render node works, else x264.
+	Encoder string `toml:"encoder"`
 }
 
 // Record configures desk's screen recordings.
@@ -78,6 +121,11 @@ type Publish struct {
 	// URL is Root's public base URL; "" means files get no links.
 	URL string `toml:"url"`
 }
+
+var (
+	sizeRE    = regexp.MustCompile(`^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$`)
+	displayRE = regexp.MustCompile(`^:[0-9]+$`)
+)
 
 // ===== Loading =====
 
@@ -141,6 +189,12 @@ func Defaults() (Config, error) {
 	}
 
 	return Config{
+		Desk: Desk{
+			Size:        "1280x960",
+			WM:          []string{"xfwm4", "--compositor=off", "--sm-client-disable"},
+			HostDisplay: ":0",
+		},
+		Video:  Video{RenderNode: "auto", Encoder: "auto"},
 		Record: Record{Dir: filepath.Join(data, "recordings")},
 		Demo: Demo{
 			Dir:     filepath.Join(data, "demos"),
@@ -174,6 +228,32 @@ func (c *Config) resolve() error {
 				k.name, *k.path)
 		}
 		*k.path = filepath.Clean(path)
+	}
+
+	if !sizeRE.MatchString(c.Desk.Size) {
+		return fmt.Errorf("desk.size: %q: want WxH, e.g. 1280x960",
+			c.Desk.Size)
+	}
+
+	if len(c.Desk.WM) == 0 || c.Desk.WM[0] == "" {
+		return errors.New("desk.wm: needs a command")
+	}
+
+	if d := c.Desk.HostDisplay; d != "" && !displayRE.MatchString(d) {
+		return fmt.Errorf("desk.host_display: %q: want :N, e.g. :0", d)
+	}
+
+	switch c.Video.Encoder {
+	case "auto", "vaapi", "x264":
+	default:
+		return fmt.Errorf("video.encoder: %q: want auto, vaapi or x264",
+			c.Video.Encoder)
+	}
+
+	if node := c.Video.RenderNode; node != "auto" && node != "" &&
+		!filepath.IsAbs(node) {
+		return fmt.Errorf("video.render_node: %q: want auto, \"\" or a "+
+			"/dev/dri path", node)
 	}
 
 	if c.Publish.URL != "" {

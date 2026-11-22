@@ -24,7 +24,7 @@ import (
 //	SIGUSR2 resume: start the next one
 //	SIGTERM stop: finalize, join, exit (also when its owner exits)
 //
-// Its state lives in /run/desk/.rec-N, written by the recorder only.
+// Its state lives in stateDir/.rec-N, written by the recorder only.
 
 const (
 	recPause  = syscall.SIGUSR1
@@ -307,6 +307,7 @@ func startRec(n int, owner Owner, video string) error {
 			"--property=After="+desk)
 	}
 
+	run = append(run, unitEnv()...)
 	run = append(run, self, "rec", "run",
 		fmt.Sprintf("--owner=%d:%d", owner.PID, owner.Start),
 		"--out="+video, strconv.Itoa(n))

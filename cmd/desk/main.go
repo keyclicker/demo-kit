@@ -1,9 +1,10 @@
 // Command desk spawns disposable, GPU-accelerated X displays for agents.
 //
-// Each desktop is a TigerVNC Xvnc server rendering on the iGPU through
-// its DRM render node, with xfwm4 on top, run as the transient systemd
-// user unit desk-N. Its VNC port is registered as noVNC token N in
-// /run/desk, so the /desktops page picks it up as a view-only tab.
+// Each desktop is a TigerVNC Xvnc server, GPU-accelerated through a DRM
+// render node when there is one, with desk.wm on top, run as the
+// transient systemd user unit desk-N. Its VNC port is registered as
+// token N in $XDG_RUNTIME_DIR/demo-kit, so `desk ls --json` lists it for
+// viewers.
 // desk-rec-N records a display (desk's own, or :0) to record.dir: by
 // default from `desk new` until `desk rm`.
 package main
@@ -15,6 +16,7 @@ import (
 	"os"
 
 	"github.com/keyclicker/demo-kit/internal/config"
+	"github.com/keyclicker/demo-kit/internal/paths"
 )
 
 // cfg is the config in effect, set once by main.
@@ -58,6 +60,13 @@ func main() {
 
 	var err error
 	if cfg, err = config.Load(); err != nil {
+		log.Fatal(err)
+	}
+
+	if stateDir, err = paths.Runtime(); err != nil {
+		log.Fatal(err)
+	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		log.Fatal(err)
 	}
 

@@ -11,12 +11,7 @@ import (
 	"time"
 )
 
-const (
-	// renderNode is the 890M's render-only DRM node, for VAAPI encoding
-	renderNode = "/dev/dri/renderD128"
-
-	ffmpegTimeout = 10 * time.Minute
-)
+const ffmpegTimeout = 10 * time.Minute
 
 // ffmpeg runs ffmpeg quietly in dir (empty: here), overwriting
 // outputs, with stdin (if any) as input.
