@@ -355,11 +355,11 @@ func speedFor(clip, length float64) float64 {
 
 // cmdBuild renders a script into one narrated, captioned mp4 with
 // chapters: demo.mp4 beside the script unless -o. A draft or a few
-// scenes make a preview in ~/tmp/demo instead.
+// scenes make a preview in demo.scratch instead.
 func cmdBuild(args []string) error {
 	fs := flag.NewFlagSet("build", flag.ExitOnError)
 	out := fs.StringP("out", "o", "", "video to write (default demo.mp4 "+
-		"beside the script; previews: ~/tmp/demo/<demo>-preview.mp4)")
+		"beside the script; previews: demo.scratch/<demo>-preview.mp4)")
 	keep := fs.Bool("keep", false, "keep the work dir (scenes, captions)")
 	draft := fs.Bool("draft", false, "preview fast: half size, no captions")
 	only := fs.String("scene", "", "preview only these scenes, e.g. 3 or 2,5")
@@ -447,7 +447,7 @@ func pickScenes(scenes []Scene, picks []int) ([]Scene, error) {
 
 // videoPath is where the build writes: out if set, else demo.mp4
 // beside the script (a demo is a folder: script, result, artifacts),
-// or for a preview ~/tmp/demo/<folder>-preview.mp4.
+// or for a preview demo.scratch/<folder>-preview.mp4.
 func videoPath(script, out string, preview bool) (string, error) {
 	if out == "" && preview {
 		dir, err := scratchDir()
@@ -647,9 +647,9 @@ func (b *builder) speak(ctx context.Context) error {
 	limit := make(chan struct{}, 6) // requests in flight
 
 	// The key only when a line has to be bought: a cached build works
-	// with the keyring locked
+	// without one
 	if uncached(scenes) {
-		key, err := apiKey(ctx)
+		key, err := apiKey()
 		if err != nil {
 			return err
 		}
@@ -1051,8 +1051,8 @@ func (b *builder) writeTranscript(video string) error {
 func (b *builder) report(ctx context.Context, video string,
 	took time.Duration) {
 	fmt.Println(video)
-	if u, err := publicURL(ctx, video); err == nil {
-		fmt.Println(u)
+	if link, ok := cfg.Publish.Link(video); ok {
+		fmt.Println(link)
 	}
 
 	chs, length, err := probeChapters(ctx, video)
@@ -1088,13 +1088,7 @@ func concatList(files []string) string {
 // ftoa formats seconds for ffmpeg arguments.
 func ftoa(f float64) string { return fmt.Sprintf("%.3f", f) }
 
-// scratchDir is ~/tmp/demo, demo's working space.
+// scratchDir is demo.scratch, made if missing: demo's throwaway output.
 func scratchDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	dir := filepath.Join(home, "tmp", "demo")
-	return dir, os.MkdirAll(dir, 0o755)
+	return cfg.Demo.Scratch, os.MkdirAll(cfg.Demo.Scratch, 0o755)
 }

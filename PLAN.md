@@ -30,14 +30,14 @@ Status: **draft for review**. Nothing is moved yet.
 
 ## What moves
 
-| Original      | Becomes                        | Notes                          |
-| ------------- | ------------------------------ | ------------------------------ |
-| `demo/`       | `cmd/demo`, `internal/demo/…`  | key from env, paths from config |
-| `desk/`       | `cmd/desk`, `internal/desk/…`  | runtime dir, encoder fallback  |
-| `chromium/`   | `desk browser`                 | Flatpak glue dropped           |
-| desktops page | `cmd/deskview`, `internal/view` | page, API, VNC proxy, noVNC    |
-| `audio/`      | `internal/audio` (`deskview`)  | optional                       |
-| `skills/`     | `skills/`                      | generic wording, config paths  |
+| Original      | Becomes          | Notes                            |
+| ------------- | ---------------- | -------------------------------- |
+| `demo/`       | `cmd/demo`       | key from env, paths from config  |
+| `desk/`       | `cmd/desk`       | runtime dir, encoder fallback    |
+| `chromium/`   | `desk browser`   | Flatpak glue dropped             |
+| desktops page | `cmd/deskview`   | page, API, VNC proxy, noVNC      |
+| `audio/`      | `cmd/deskview`   | optional                         |
+| `skills/`     | `skills/`        | generic wording, config paths    |
 
 Stays private: the home page server, the health watchdog, the virtual
 monitor EDID, the host's own `:0` VNC server and the null-sink PipeWire
@@ -56,19 +56,16 @@ One Go module, three binaries:
 ```
 cmd/desk/            desk CLI: new, ls, rm, rec, claim, release, browser
 cmd/demo/            demo CLI: build, code, frames, say, voices
-cmd/deskview/        deskview server
-internal/config/     config.toml loading, defaults, path expansion
-internal/paths/      XDG dirs and the one publish-URL helper
-internal/desk/       displays, registry, ownership, recording
-internal/browser/    Chromium launcher (desk browser)
-internal/view/       HTTP: page, /api/desktops, VNC proxy, /files/,
-                     mounts internal/audio
-internal/view/web/   the desktops page and vendored noVNC (embedded)
-internal/audio/      PipeWire capture and PCM broadcaster
-internal/demo/…      build, code drawing, speech, frames
+cmd/deskview/        deskview server; web/ holds the page and noVNC
+internal/config/     config.toml: schema, defaults, `<bin> config`,
+                     publish links
+internal/paths/      XDG dirs, "~/" expansion
 skills/              agent skills, linked by install.sh
 install.sh
 ```
+
+Each binary's code is its own `package main` under `cmd/`; `internal/` holds
+only what more than one binary uses. Every binary has `<bin> config [KEY]`.
 
 Why one module, not three: all binaries share `internal/config` and
 `internal/paths`. Separate modules would turn those into a fourth module
@@ -97,6 +94,7 @@ encoder = "auto"            # "auto" (VAAPI if usable, else x264),
 
 [demo]
 dir = "~/.local/share/demo-kit/demos"
+scratch = "~/.cache/demo-kit/scratch"  # previews, drawn code, sheets
 voice = "Umbriel"
 sink = ""                   # where `demo say` plays; "" = default output
 
@@ -130,6 +128,7 @@ dir = "~/public/recordings"
 
 [demo]
 dir = "~/public/demos"
+scratch = "~/tmp/demo"
 sink = "desktop-speaker"
 
 [deskview]
@@ -186,7 +185,7 @@ offers to enable.
 - `/api/desktops`: what `desk ls --json` prints.
 - `/vnc/<display>`: WebSocket ↔ VNC TCP proxy in Go. Replaces the
   `websockify` package.
-- noVNC: its JS client is vendored into `internal/view/web/novnc/` with its
+- noVNC: its JS client is vendored into `cmd/deskview/web/novnc/` with its
   MPL-2.0 license and embedded with `go:embed`. Replaces the distro `novnc`
   package, whose name and paths differ per distro.
 - `/files/`: `[publish] root`, read-only, dot-names hidden.
@@ -214,8 +213,8 @@ Replaces `agent-chromium`.
 - `OPENROUTER_API_KEY` from the environment; a clear error when unset.
 - No PipeWire: `demo say` writes the `.wav` and skips playback. `demo build`
   never needs PipeWire.
-- Publish paths and URLs through `internal/paths` (today the URL code is
-  duplicated in `demo` and `desk`).
+- Publish links through `config.Publish.Link` (it was duplicated in `demo`
+  and `desk`, each asking `tailscale status`).
 
 ### Skills
 

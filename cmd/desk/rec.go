@@ -134,15 +134,15 @@ func printRecording(n int, video string) {
 	}
 
 	fmt.Printf(":%d recording: %s\n", n, video)
-	if u := recordingURL(video); u != "" {
-		fmt.Printf(":%d url: %s\n", n, u)
+	if link, ok := cfg.Publish.Link(video); ok {
+		fmt.Printf(":%d url: %s\n", n, link)
 	}
 }
 
 // ---- Commands ----
 
 const recUsage = `usage:
-  desk rec start [-o FILE] [--force] :N  record (default ~/public/recordings)
+  desk rec start [-o FILE] [--force] :N  record (default: in record.dir)
   desk rec pause [--force] :N            stop grabbing, keep the video open
   desk rec resume [--force] :N           grab again, into the same video
   desk rec stop [--force] :N             finish: join, print path and URL
@@ -189,7 +189,7 @@ func cmdRec(args []string) error {
 // desk display, or a user display it claimed.
 func cmdRecStart(args []string) error {
 	fs := flag.NewFlagSet("rec start", flag.ExitOnError)
-	out := fs.StringP("out", "o", "", "video file (default ~/public/recordings/...)")
+	out := fs.StringP("out", "o", "", "video file (default: in record.dir)")
 	force := fs.Bool("force", false, "record another agent's display")
 	fs.Parse(args)
 
@@ -213,9 +213,7 @@ func cmdRecStart(args []string) error {
 
 	video := *out
 	if video == "" {
-		if video, err = recordingPath(n); err != nil {
-			return err
-		}
+		video = recordingPath(n)
 	}
 	if video, err = filepath.Abs(video); err != nil {
 		return err
