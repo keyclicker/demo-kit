@@ -22,6 +22,10 @@ import (
 // cfg is the config in effect, set once by main.
 var cfg config.Config
 
+// cacheDir is $XDG_CACHE_HOME/demo-kit: browser runs, temp profiles and
+// the Widevine cache. Set once by main.
+var cacheDir string
+
 const usageText = `desk: disposable X displays for agents
 
   desk new [--size WxH] [--no-rec]   start a recorded desktop, print :N
@@ -35,6 +39,11 @@ const usageText = `desk: disposable X displays for agents
 
   desk claim [--force] [:0]          take the user's :0 for yourself
   desk release [:0]                  give it back
+
+  desk browser start --display :N [--profile P] [URL...]
+                                     the agents' Chromium on :N, prints
+                                     its DevTools port (agent-browser
+                                     connect PORT); desk browser -h
 
   desk config [KEY]                  print the config in effect, or one
                                      key's value
@@ -66,6 +75,9 @@ func main() {
 	if stateDir, err = paths.Runtime(); err != nil {
 		log.Fatal(err)
 	}
+	if cacheDir, err = paths.Cache(); err != nil {
+		log.Fatal(err)
+	}
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		log.Fatal(err)
 	}
@@ -88,6 +100,8 @@ func main() {
 		err = cmdRelease(args)
 	case "rec":
 		err = cmdRec(args)
+	case "browser":
+		err = cmdBrowser(args)
 	case "config":
 		err = config.Cmd("desk", cfg, args, os.Stdout)
 	case "help", "-h", "-help", "--help":
@@ -99,6 +113,9 @@ func main() {
 
 	if errors.Is(err, errUserActive) {
 		os.Exit(3)
+	}
+	if errors.Is(err, errStopped) {
+		os.Exit(1)
 	}
 	if err != nil {
 		log.Fatal(err)

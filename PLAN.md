@@ -115,7 +115,7 @@ url = ""                    # public base URL of /files/; "" = print paths
 
 [browser]
 command = ["chromium"]      # any Chromium-family browser
-profile = "temp"            # "temp" (fresh, deleted on stop) or a path
+main_profile = "~/.config/chromium"  # --profile main: the user's own
 ```
 
 Secrets never live in the config: `demo` reads `OPENROUTER_API_KEY` from the
@@ -146,10 +146,11 @@ url = "https://<node>/files/"
 
 [browser]
 command = ["flatpak", "run", "org.chromium.Chromium"]
+main_profile = "~/.var/app/org.chromium.Chromium/config/chromium"
 ```
 
-The Flatpak sandbox also needs one `flatpak override` for
-`~/.cache/demo-kit`. That is machine config, not demo-kit's.
+Flathub's Chromium already sees all of `$HOME` (`filesystems=home`), so
+temp profiles in `~/.cache/demo-kit/browser` need no override.
 
 ## Paths
 
@@ -211,7 +212,10 @@ Replaces `agent-chromium`.
   (sites see `navigator.webdriver == false`), prints the DevTools port.
 - `stop PORT` closes it through DevTools (`Browser.close`), and tracking is
   by port, not PID: launchers that fork (`flatpak run`) just work. The
-  `bwrap` argv parsing goes away.
+  `bwrap` argv parsing goes away; a profile in use is spotted by Chromium's
+  own `SingletonLock`.
+- `--profile temp` (default, fresh, deleted on stop), `main`
+  (`browser.main_profile`) or a directory.
 - Kept: the Widevine CDM cache for temp profiles (best effort: some distro
   Chromium builds ship without Widevine) and the quiet password-manager
   prefs.
@@ -259,9 +263,7 @@ Package names get verified in CI containers per family.
 Chromium is required: `desk browser` and the browser skills need it, and
 later HTML scenes will too. Debian, Fedora and Arch get their native package.
 Ubuntu ships only a snap, so it gets Flathub's `org.chromium.Chromium`
-(user scope) plus
-`flatpak override --user --filesystem=xdg-cache/demo-kit org.chromium.Chromium`
-for the profiles. No snap, no Google Chrome. `install.sh` writes what it
+(user scope). No snap, no Google Chrome. `install.sh` writes what it
 installed into the default `[browser] command`.
 
 ## Platforms
