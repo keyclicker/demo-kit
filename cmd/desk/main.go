@@ -72,43 +72,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if stateDir, err = paths.Runtime(); err != nil {
-		log.Fatal(err)
-	}
-	if cacheDir, err = paths.Cache(); err != nil {
-		log.Fatal(err)
-	}
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		log.Fatal(err)
-	}
-
+	// Commands that touch no displays work anywhere, a container or an
+	// SSH session without $XDG_RUNTIME_DIR included
 	switch cmd {
-	case "new":
-		err = cmdNew(args)
-	case "ls":
-		err = cmdList(args)
-	case "rm":
-		err = cmdRemove(args)
-	case "run":
-		// Internal: a desk-N unit's main process and its ExecStopPost
-		err = cmdRun(args)
-	case "cleanup":
-		err = cmdCleanup(args)
-	case "claim":
-		err = cmdClaim(args)
-	case "release":
-		err = cmdRelease(args)
-	case "rec":
-		err = cmdRec(args)
-	case "browser":
-		err = cmdBrowser(args)
 	case "config":
 		err = config.Cmd("desk", cfg, args, os.Stdout)
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usageText)
 	default:
-		fmt.Fprint(os.Stderr, usageText)
-		os.Exit(2)
+		err = runDisplayCmd(cmd, args)
 	}
 
 	if errors.Is(err, errUserActive) {
@@ -120,4 +92,45 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// runDisplayCmd sets up desk's dirs and runs a command that works on
+// displays, browsers or recordings.
+func runDisplayCmd(cmd string, args []string) error {
+	var err error
+	if stateDir, err = paths.Runtime(); err != nil {
+		return err
+	}
+	if cacheDir, err = paths.Cache(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return err
+	}
+
+	switch cmd {
+	case "new":
+		return cmdNew(args)
+	case "ls":
+		return cmdList(args)
+	case "rm":
+		return cmdRemove(args)
+	case "run":
+		// Internal: a desk-N unit's main process and its ExecStopPost
+		return cmdRun(args)
+	case "cleanup":
+		return cmdCleanup(args)
+	case "claim":
+		return cmdClaim(args)
+	case "release":
+		return cmdRelease(args)
+	case "rec":
+		return cmdRec(args)
+	case "browser":
+		return cmdBrowser(args)
+	}
+
+	fmt.Fprint(os.Stderr, usageText)
+	os.Exit(2)
+	return nil
 }
