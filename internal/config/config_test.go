@@ -40,13 +40,17 @@ func TestLoadDefaults(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"record.dir":   home + "/.local/share/demo-kit/recordings",
-		"demo.dir":     home + "/.local/share/demo-kit/demos",
-		"demo.scratch": home + "/.cache/demo-kit/scratch",
-		"demo.voice":   "Umbriel",
-		"demo.sink":    "",
-		"publish.root": home + "/.local/share/demo-kit",
-		"publish.url":  "",
+		"record.dir":        home + "/.local/share/demo-kit/recordings",
+		"demo.dir":          home + "/.local/share/demo-kit/demos",
+		"demo.scratch":      home + "/.cache/demo-kit/scratch",
+		"desk.size":         "1280x960",
+		"desk.host_display": ":0",
+		"video.encoder":     "auto",
+		"video.render_node": "auto",
+		"demo.voice":        "Umbriel",
+		"demo.sink":         "",
+		"publish.root":      home + "/.local/share/demo-kit",
+		"publish.url":       "",
 	}
 	for key, w := range want {
 		if got, err := c.get(key); err != nil || got != w {
@@ -86,6 +90,11 @@ func TestLoadRejects(t *testing.T) {
 		"relative path": "[record]\ndir = \"videos\"\n",
 		"bad url":       "[publish]\nurl = \"node/files\"\n",
 		"malformed":     "[demo\n",
+		"bad size":      "[desk]\nsize = \"big\"\n",
+		"empty wm":      "[desk]\nwm = []\n",
+		"bad display":   "[desk]\nhost_display = \"0\"\n",
+		"bad encoder":   "[video]\nencoder = \"nvenc\"\n",
+		"bad node":      "[video]\nrender_node = \"renderD128\"\n",
 	}
 
 	for name, body := range cases {

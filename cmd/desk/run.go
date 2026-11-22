@@ -16,15 +16,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/keyclicker/demo-kit/internal/encode"
 )
 
-const (
-	// renderNode is the 890M's render-only DRM node: Xvnc takes GPU
-	// buffers from apps through DRI3 here, so GL never hits llvmpipe.
-	renderNode = "/dev/dri/renderD128"
-
-	background = "#2b2f36"
-)
+const background = "#2b2f36"
 
 // cmdRun is the main process of a desk-N unit: it runs Xvnc and xfwm4,
 // registers the noVNC token, and exits once its owner does.
@@ -81,10 +77,15 @@ func cmdRun(args []string) error {
 
 	// ---- X server ----
 
-	xvnc := exec.Command("Xtigervnc", display,
-		"-auth", serverAuth,
-		"-geometry", size, "-depth", "24",
-		"-rendernode", renderNode,
+	xvncArgs := []string{display, "-auth", serverAuth,
+		"-geometry", size, "-depth", "24"}
+
+	// GPU buffers from apps through DRI3, so GL never hits llvmpipe
+	if node := xvncRenderNode(); node != "" {
+		xvncArgs = append(xvncArgs, "-rendernode", node)
+	}
+
+	xvncArgs = append(xvncArgs,
 		"-localhost", "-rfbport", strconv.Itoa(basePort+n),
 		"-SecurityTypes", "None", "-AlwaysShared",
 		"-desktop", "desk "+display,
@@ -93,6 +94,8 @@ func cmdRun(args []string) error {
 		"-AcceptKeyEvents=0", "-AcceptPointerEvents=0",
 		"-AcceptCutText=0", "-AcceptSetDesktopSize=0",
 	)
+
+	xvnc := exec.Command(xvncBinary(), xvncArgs...)
 	xvnc.Stdout = os.Stderr
 	xvnc.Stderr = os.Stderr
 
@@ -117,12 +120,12 @@ func cmdRun(args []string) error {
 		log.Printf("xsetroot: %v", err)
 	}
 
-	// Compositing off: Xvnc's DRI3 path glitches under compositors.
-	// Systemd reaps it with the unit's cgroup.
-	wm := exec.Command("xfwm4", "--compositor=off", "--sm-client-disable")
+	// desk.wm; keep compositing off: Xvnc's DRI3 path glitches under
+	// compositors. Systemd reaps it with the unit's cgroup.
+	wm := exec.Command(cfg.Desk.WM[0], cfg.Desk.WM[1:]...)
 	wm.Env = env
 	if err := wm.Start(); err != nil {
-		log.Printf("xfwm4: %v", err)
+		log.Printf("%s: %v", cfg.Desk.WM[0], err)
 	}
 
 	// Listed apps open maximized (maximize.go)
@@ -288,6 +291,36 @@ func cmdCleanup(args []string) error {
 	}
 
 	return nil
+}
+
+// xvncBinary is TigerVNC's X server: Xtigervnc on Debian (where Xvnc
+// may be another VNC's), Xvnc elsewhere.
+func xvncBinary() string {
+	if _, err := exec.LookPath("Xtigervnc"); err == nil {
+		return "Xtigervnc"
+	}
+	return "Xvnc"
+}
+
+// xvncRenderNode is video.render_node, if this Xvnc takes -rendernode
+// (TigerVNC 1.14+); "" means software GL.
+func xvncRenderNode() string {
+	node, err := encode.RenderNode(cfg.Video.RenderNode)
+	if err != nil {
+		log.Print(err)
+		return ""
+	}
+	if node == "" {
+		return ""
+	}
+
+	help, _ := exec.Command(xvncBinary(), "-help").CombinedOutput()
+	if !strings.Contains(string(help), "-rendernode") {
+		log.Printf("%s has no -rendernode: software GL", xvncBinary())
+		return ""
+	}
+
+	return node
 }
 
 // serverAuthPath is Xvnc's private copy of display n's cookie.

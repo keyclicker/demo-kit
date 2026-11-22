@@ -42,17 +42,23 @@ func readClaim(n int) *Owner {
 	return nil
 }
 
-// parseUserDisplay accepts a display the user owns: listed in stateDir
-// and not one of desk's own.
+// parseUserDisplay accepts the user's own display: desk.host_display,
+// up, and a real X server, not Xwayland.
 func parseUserDisplay(s string) (int, error) {
 	n, err := strconv.Atoi(strings.TrimPrefix(s, ":"))
 	if err != nil {
 		return 0, fmt.Errorf("%q: not a display", s)
 	}
 
-	data, err := os.ReadFile(filepath.Join(stateDir, strconv.Itoa(n)))
-	if err != nil || strings.Contains(string(data), managedMark) {
-		return 0, fmt.Errorf(":%d: not a user display (see desk ls)", n)
+	host, ok := hostDisplay()
+	if !ok || n != host {
+		return 0, fmt.Errorf(":%d: not the host display (desk.host_display; "+
+			"see desk ls)", n)
+	}
+
+	if xwayland(n) {
+		return 0, fmt.Errorf(":%d is Xwayland, in a Wayland session: claim "+
+			"and recording need X11. Use a desk display: desk new", n)
 	}
 
 	return n, nil
@@ -177,4 +183,19 @@ func idleTime(n int) (time.Duration, error) {
 	}
 
 	return time.Duration(info.MsSinceUserInput) * time.Millisecond, nil
+}
+
+// xwayland reports whether display n is Xwayland: a Wayland session's X
+// shim, where grabbing the screen sees only X apps. Unreachable counts
+// as no: whatever runs next fails with its own reason.
+func xwayland(n int) bool {
+	conn, err := xgb.NewConnDisplay(fmt.Sprintf(":%d", n))
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+
+	const name = "XWAYLAND"
+	reply, err := xproto.QueryExtension(conn, uint16(len(name)), name).Reply()
+	return err == nil && reply.Present
 }
