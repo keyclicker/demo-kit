@@ -244,10 +244,15 @@ ships as an optional extra: only recordings of interactive programs need it,
 | Recording       | `ffmpeg`                     | `ffmpeg` (RPM Fusion)    | `ffmpeg`    |
 | Input, shots    | `xdotool scrot imagemagick`  | `xdotool scrot ImageMagick` | `xdotool scrot imagemagick` |
 | Audio, optional | `pipewire-bin`               | `pipewire-utils`         | `pipewire`  |
-| Browser, opt.   | `chromium`                   | `chromium`               | `chromium`  |
+| Browser         | see below                    | `chromium`               | `chromium`  |
 | Build           | `golang-go git`              | `golang git`             | `go git`    |
 
 Package names get verified in CI containers per family.
+
+Chromium is required: `desk browser` and the browser skills need it, and
+later HTML scenes will too. Debian has a `chromium` deb; Ubuntu ships only
+the snap (open: snap, Flathub or Google Chrome's deb repo). `install.sh`
+writes the binary it installed into the default `[browser] command`.
 
 ## Platforms
 
@@ -281,5 +286,7 @@ Each step is one PR.
 ## Later
 
 - Audio in recordings: [#1](https://github.com/keyclicker/demo-kit/issues/1).
+- HTML scenes for diagrams, rare by design:
+  [#3](https://github.com/keyclicker/demo-kit/issues/3).
 - Per-display audio.
 - openSUSE.
