@@ -147,11 +147,8 @@ func cmdNew(args []string) error {
 
 	// The same recorder as `desk rec start`; no video is no reason to
 	// lose the desktop
-	video, err := recordingPath(n)
-	if err == nil {
-		err = startRec(n, owner, video)
-	}
-	if err != nil {
+	video := recordingPath(n)
+	if err := startRec(n, owner, video); err != nil {
 		fmt.Fprintf(os.Stderr, "desk: not recording: %v\n", err)
 		return nil
 	}

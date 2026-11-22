@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/keyclicker/demo-kit/internal/config"
 )
 
 const usageText = `demo: narrated demo and explainer videos, and speech
@@ -25,11 +27,13 @@ const usageText = `demo: narrated demo and explainer videos, and speech
   demo code --diff [--split] [--hunks 1,3] [--lines A-B] [--focus A-B] -- [git args]
                          draw code as a code scene would, list its parts
   demo say [-o FILE] [--no-play] [--cost] [text...]
-                         speak on :0's speaker (no text: stdin)
+                         speak on demo.sink (no text: stdin)
   demo voices            the voice names a script can pick
+  demo config [KEY]      print the config in effect, or one key's value
 
 Recordings come from desk (desk new records; desk rec for more).
 Script format and workflow: the demo skill. Each command: -h.
+Speech needs $OPENROUTER_API_KEY. Config: demo config -h.
 `
 
 func main() {
@@ -43,7 +47,12 @@ func main() {
 
 	cmd, args := os.Args[1], os.Args[2:]
 
-	var err error
+	c, err := config.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+	configure(c)
+
 	switch cmd {
 	case "build":
 		err = cmdBuild(args)
@@ -55,6 +64,8 @@ func main() {
 		err = cmdSay(args)
 	case "voices":
 		err = cmdVoices(args)
+	case "config":
+		err = config.Cmd("demo", cfg, args, os.Stdout)
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usageText)
 	default:
@@ -65,6 +76,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// cfg is the config in effect, set once by main.
+var cfg config.Config
+
+// configure makes c the config in effect, defaults included.
+func configure(c config.Config) {
+	cfg = c
+	defaultVoice.Name = c.Demo.Voice
 }
 
 // signalContext is a command's context: canceled on SIGINT or SIGTERM,
