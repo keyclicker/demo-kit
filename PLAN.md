@@ -248,17 +248,20 @@ ships as an optional extra: only recordings of interactive programs need it,
 5. Offer: enable the `deskview` user unit, write a default config, link
    skills into `~/.claude/skills` and `~/.codex/skills`.
 
-| Need            | Debian/Ubuntu                | Fedora/RHEL              | Arch        |
-| --------------- | ---------------------------- | ------------------------ | ----------- |
-| Xvnc            | `tigervnc-standalone-server` | `tigervnc-server`        | `tigervnc`  |
-| WM              | `xfwm4`                      | `xfwm4`                  | `xfwm4`     |
-| Recording       | `ffmpeg`                     | `ffmpeg` (RPM Fusion)    | `ffmpeg`    |
-| Input, shots    | `xdotool scrot imagemagick`  | `xdotool scrot ImageMagick` | `xdotool scrot imagemagick` |
-| Audio, optional | `pipewire-bin`               | `pipewire-utils`         | `pipewire`  |
-| Browser         | `chromium`; Ubuntu: Flathub  | `chromium`               | `chromium`  |
-| Build           | `golang-go git`              | `golang git`             | `go git`    |
+| Need          | Debian/Ubuntu                | Fedora/RHEL                 | Arch             |
+| ------------- | ---------------------------- | --------------------------- | ---------------- |
+| Xvnc          | `tigervnc-standalone-server` | `tigervnc-server-minimal`   | `tigervnc`       |
+| X tools       | `xauth x11-xserver-utils`    | `xorg-x11-xauth xsetroot`   | `xorg-xauth xorg-xsetroot` |
+| WM            | `xfwm4`                      | `xfwm4`                     | `xfwm4`          |
+| Video         | `ffmpeg`                     | `ffmpeg` (RPM Fusion)       | `ffmpeg`         |
+| Agents' input | `xdotool scrot imagemagick xterm` | `xdotool scrot ImageMagick xterm` | `xdotool scrot imagemagick xterm` |
+| Caption font  | `fonts-dejavu-core`          | `dejavu-sans-fonts`         | `ttf-dejavu`     |
+| Sound         | `pipewire-bin`               | `pipewire-utils`            | `pipewire-audio` |
+| Browser       | `chromium`; Ubuntu: Flathub  | `chromium` (`chromium-browser`) | `chromium`   |
+| Build         | `golang-go git`              | `golang git`                | `go git`         |
 
-Package names get verified in CI containers per family.
+CI runs `install.sh --yes` in a fresh container per family, then
+`.github/verify-install.sh` checks every tool is there.
 
 Chromium is required: `desk browser` and the browser skills need it, and
 later HTML scenes will too. Debian, Fedora and Arch get their native package.
