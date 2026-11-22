@@ -3,12 +3,10 @@ package main
 import (
 	"bufio"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,49 +17,12 @@ import (
 	"time"
 )
 
-// recordDir, under $HOME, is served over Tailscale as /public/recordings.
-const recordDir = "public/recordings"
-
-// recordingPath names a recording of display n started now.
-func recordingPath(n int) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	name := fmt.Sprintf("%s-desk-%d.mp4", time.Now().Format("2006-01-02-150405"), n)
-	return filepath.Join(home, recordDir, name), nil
-}
-
-// recordingURL is where the tailnet reaches a video in ~/public: hub
-// serves that dir at /files/. Empty if tailscale can't name this node.
-func recordingURL(video string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-
-	rel, err := filepath.Rel(filepath.Join(home, "public"), video)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return ""
-	}
-
-	out, err := exec.Command("tailscale", "status", "--json").Output()
-	if err != nil {
-		return ""
-	}
-
-	var status struct{ Self struct{ DNSName string } }
-	if json.Unmarshal(out, &status) != nil || status.Self.DNSName == "" {
-		return ""
-	}
-
-	u := url.URL{
-		Scheme: "https",
-		Host:   strings.TrimSuffix(status.Self.DNSName, "."),
-		Path:   "/files/" + filepath.ToSlash(rel),
-	}
-	return u.String()
+// recordingPath names a recording of display n started now, in
+// record.dir.
+func recordingPath(n int) string {
+	name := fmt.Sprintf("%s-desk-%d.mp4",
+		time.Now().Format("2006-01-02-150405"), n)
+	return filepath.Join(cfg.Record.Dir, name)
 }
 
 // ---- Recording ----

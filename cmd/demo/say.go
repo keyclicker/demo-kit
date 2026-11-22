@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keyclicker/demo-kit/internal/paths"
 )
 
 // ---- Voice ----
@@ -31,8 +33,7 @@ type Voice struct {
 }
 
 var defaultVoice = Voice{
-	Model: "google/gemini-3.8-flash-tts",
-	Name:  "Umbriel",
+	Model: "google/gemini-3.8-flash-tts", // Name: demo.voice, by configure
 	Instructions: "Adult male voice. Fast, energetic pacing, like a " +
 		"podcast host. Casual, dry-humored. Not whispery, not intimate.",
 	Tempo: 1.2,
@@ -65,7 +66,7 @@ type spoken struct {
 }
 
 // speak synthesizes text in voice v to a 48 kHz mono wav, cached by
-// voice and text in ~/.cache/demo/tts: rebuilding a demo after a
+// voice and text in $XDG_CACHE_HOME/demo-kit/tts: rebuilding a demo after a
 // narration edit only pays for the lines that changed. Beside each wav,
 // its receipt says what it cost when made.
 func speak(ctx context.Context, key string, v Voice,
@@ -142,11 +143,11 @@ func (k *keyLocks) lock(key string) *sync.Mutex {
 
 // cachePath names the cached wav of text in voice v.
 func cachePath(v Voice, text string) (string, error) {
-	dir, err := os.UserCacheDir()
+	dir, err := paths.Cache()
 	if err != nil {
 		return "", err
 	}
-	dir = filepath.Join(dir, "demo", "tts")
+	dir = filepath.Join(dir, "tts")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -173,21 +174,18 @@ func transcode(ctx context.Context, sp speech, tempo float64,
 	return ffmpeg(ctx, "", bytes.NewReader(sp.Audio), args...)
 }
 
-// apiKey reads the OpenRouter key from the keyring, at call time.
-func apiKey(ctx context.Context) (string, error) {
-	b, err := exec.CommandContext(ctx, "secret-tool", "lookup",
-		"service", "openrouter", "account", "keyclicker").Output()
-	key := strings.TrimSpace(string(b))
-	if err != nil || key == "" {
-		return "", fmt.Errorf("no OpenRouter key in the keyring: %v", err)
+// apiKey returns the OpenRouter key, $OPENROUTER_API_KEY.
+func apiKey() (string, error) {
+	key := strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
+	if key == "" {
+		return "", errors.New("no OpenRouter key: set $OPENROUTER_API_KEY")
 	}
 	return key, nil
 }
 
 // ---- demo say ----
 
-// cmdSay speaks text aloud on :0's default sink (the desktop speaker,
-// so /desktops 🔊 and Moonlight hear it), and saves it with -o.
+// cmdSay speaks text aloud on demo.sink, and saves it with -o.
 func cmdSay(args []string) error {
 	fs := flag.NewFlagSet("say", flag.ExitOnError)
 	v := voiceFlags(fs)
@@ -213,7 +211,7 @@ func cmdSay(args []string) error {
 
 	ctx, stop := signalContext()
 	defer stop()
-	key, err := apiKey(ctx)
+	key, err := apiKey()
 	if err != nil {
 		return err
 	}
@@ -230,10 +228,8 @@ func cmdSay(args []string) error {
 	}
 
 	if !*noPlay {
-		cmd := exec.CommandContext(ctx, "pw-play", sp.Wav)
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("pw-play: %w", err)
+		if err := play(ctx, sp.Wav); err != nil {
+			return err
 		}
 	}
 
@@ -241,6 +237,28 @@ func cmdSay(args []string) error {
 		fmt.Fprintf(os.Stderr, "demo: %s\n", billOf(ctx, key, []spoken{sp}))
 	}
 
+	return nil
+}
+
+// play plays a wav on demo.sink with PipeWire's pw-play. Without
+// PipeWire it only says where the audio is: no sound is no failure.
+func play(ctx context.Context, wav string) error {
+	if _, err := exec.LookPath("pw-play"); err != nil {
+		fmt.Fprintf(os.Stderr, "demo: not played, no pw-play (PipeWire): "+
+			"%s\n", wav)
+		return nil
+	}
+
+	args := []string{wav}
+	if cfg.Demo.Sink != "" {
+		args = append([]string{"--target", cfg.Demo.Sink}, args...)
+	}
+
+	cmd := exec.CommandContext(ctx, "pw-play", args...)
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("pw-play: %w", err)
+	}
 	return nil
 }
 

@@ -4,8 +4,8 @@
 // its DRM render node, with xfwm4 on top, run as the transient systemd
 // user unit desk-N. Its VNC port is registered as noVNC token N in
 // /run/desk, so the /desktops page picks it up as a view-only tab.
-// desk-rec-N records a display (desk's own, or :0) to
-// ~/public/recordings: by default from `desk new` until `desk rm`.
+// desk-rec-N records a display (desk's own, or :0) to record.dir: by
+// default from `desk new` until `desk rm`.
 package main
 
 import (
@@ -13,7 +13,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+
+	"github.com/keyclicker/demo-kit/internal/config"
 )
+
+// cfg is the config in effect, set once by main.
+var cfg config.Config
 
 const usageText = `desk: disposable X displays for agents
 
@@ -28,6 +33,9 @@ const usageText = `desk: disposable X displays for agents
 
   desk claim [--force] [:0]          take the user's :0 for yourself
   desk release [:0]                  give it back
+
+  desk config [KEY]                  print the config in effect, or one
+                                     key's value
 
 A desktop or claim belongs to the agent that ran desk (the first
 non-shell ancestor, or $DESK_OWNER_PID) and ends when that agent exits.
@@ -49,6 +57,10 @@ func main() {
 	cmd, args := os.Args[1], os.Args[2:]
 
 	var err error
+	if cfg, err = config.Load(); err != nil {
+		log.Fatal(err)
+	}
+
 	switch cmd {
 	case "new":
 		err = cmdNew(args)
@@ -67,6 +79,8 @@ func main() {
 		err = cmdRelease(args)
 	case "rec":
 		err = cmdRec(args)
+	case "config":
+		err = config.Cmd("desk", cfg, args, os.Stdout)
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usageText)
 	default:

@@ -5,10 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -138,43 +135,4 @@ func probeChapters(ctx context.Context, path string) ([]Chapter,
 func clock(secs float64) string {
 	s := int(secs + 0.5)
 	return fmt.Sprintf("%d:%02d", s/60, s%60)
-}
-
-// ---- Publishing paths ----
-
-// publicDir is ~/public, which hub serves to the tailnet at /files/.
-func publicDir() (string, error) {
-	home, err := os.UserHomeDir()
-	return filepath.Join(home, "public"), err
-}
-
-// publicURL is where the tailnet reaches a file in ~/public.
-func publicURL(ctx context.Context, path string) (string, error) {
-	public, err := publicDir()
-	if err != nil {
-		return "", err
-	}
-
-	rel, err := filepath.Rel(public, path)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return "", fmt.Errorf("%s: not in %s, so not served", path, public)
-	}
-
-	out, err := exec.CommandContext(ctx, "tailscale", "status",
-		"--json").Output()
-	if err != nil {
-		return "", fmt.Errorf("tailscale status: %w", err)
-	}
-
-	var status struct{ Self struct{ DNSName string } }
-	if json.Unmarshal(out, &status) != nil || status.Self.DNSName == "" {
-		return "", fmt.Errorf("tailscale doesn't name this node")
-	}
-
-	u := url.URL{
-		Scheme: "https",
-		Host:   strings.TrimSuffix(status.Self.DNSName, "."),
-		Path:   "/files/" + filepath.ToSlash(rel),
-	}
-	return u.String(), nil
 }

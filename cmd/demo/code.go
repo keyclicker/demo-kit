@@ -1138,7 +1138,7 @@ func cmdCode(args []string) error {
 	split := fs.Bool("split", false, "a diff side by side: old left, new right")
 	tree := fs.Bool("tree", false, "the arg is a directory: draw its file tree")
 	depth := fs.Int("depth", 0, "tree depth (default 3)")
-	out := fs.StringP("out", "o", "", "PNG to write (default ~/tmp/demo/code-<time>.png)")
+	out := fs.StringP("out", "o", "", "PNG to write (default demo.scratch/code-<time>.png)")
 	unified := fs.IntP("unified", "U", 3, "diff context lines")
 	picks := fs.String("hunks", "", "diff hunks to keep, e.g. 1,3 (default all)")
 	lines := fs.String("lines", "", "line range to keep, e.g. 120-160")
