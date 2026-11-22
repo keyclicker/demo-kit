@@ -22,9 +22,9 @@ import (
 
 const widevineHint = "latest-component-updated-widevine-cdm"
 
+// widevineCache keeps the newest CDM between temp profiles.
 func widevineCache() string {
-	return filepath.Join(xdgDir("XDG_CACHE_HOME", ".cache"),
-		"agent-chromium", "WidevineCdm")
+	return filepath.Join(cacheDir, "widevine", "WidevineCdm")
 }
 
 // widevineVersion returns the CDM version a WidevineCdm dir's hint

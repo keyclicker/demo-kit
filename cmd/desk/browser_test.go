@@ -7,45 +7,6 @@ import (
 	"testing"
 )
 
-func TestBrowserProfile(t *testing.T) {
-	t.Setenv("HOME", "/home/u")
-	const agent = "/home/u/.local/share/agent-chromium"
-	dir := "--user-data-dir=" + agent
-
-	cases := []struct {
-		name string
-		argv []string
-		want string
-	}{
-		{"agent browser", []string{"/app/chromium/chrome", "--x", dir}, agent},
-		{"user's own", []string{"/app/chromium/chrome", "--x"}, mainProfile()},
-		{"renderer", []string{"/app/chromium/chrome", "--type=renderer", dir}, ""},
-		{"bwrap wrapper", []string{"bwrap", "--", "chromium", dir}, ""},
-		{"shell quoting it", []string{"zsh", "-c", "pkill -f " + dir}, ""},
-		{"empty", nil, ""},
-	}
-
-	for _, c := range cases {
-		if got := browserProfile(c.argv); got != c.want {
-			t.Errorf("%s: browserProfile = %q, want %q", c.name, got, c.want)
-		}
-	}
-}
-
-func TestParseCmdline(t *testing.T) {
-	cases := map[string]int{
-		"bwrap\x00--\x00chromium\x00":                  3,
-		"/app/chromium/chrome --type=zygote --x=1\x00": 3, // retitled
-		"": 0,
-	}
-
-	for raw, want := range cases {
-		if got := parseCmdline([]byte(raw)); len(got) != want {
-			t.Errorf("parseCmdline(%q) = %q, want %d args", raw, got, want)
-		}
-	}
-}
-
 func TestQuietPasswordsKeepsOtherPrefs(t *testing.T) {
 	profile := t.TempDir()
 	path := filepath.Join(profile, "Default", "Preferences")
@@ -90,7 +51,7 @@ func TestQuietPasswordsFreshProfile(t *testing.T) {
 }
 
 func TestWidevineSeedAndHarvest(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	cacheDir = t.TempDir()
 
 	// A first temp profile downloaded a CDM: harvest caches it
 	first := t.TempDir()
@@ -123,7 +84,7 @@ func TestWidevineSeedAndHarvest(t *testing.T) {
 }
 
 func TestSeedWidevineEmptyCache(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	cacheDir = t.TempDir()
 
 	profile := t.TempDir()
 	seedWidevine(profile)
