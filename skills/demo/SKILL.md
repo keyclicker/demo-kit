@@ -26,16 +26,17 @@ The reply that delivers a demo is the video and a short list, all
 from `demo build`'s output; everything else is in the video:
 
 ```md
-![demo](/home/u/public/demos/demo-kit-desk-rec/demo.mp4)
+![demo](/home/u/.local/share/demo-kit/demos/demo-kit-desk-rec/demo.mp4)
 
-- [demo-kit-desk-rec/demo.mp4](https://node/files/demos/demo-kit-desk-rec/demo.mp4)
+- [demo-kit-desk-rec/demo.mp4](https://example.host/files/demos/demo-kit-desk-rec/demo.mp4)
 - 1:09, built in 10 s
 - speech $0.017
 - pushed to [PR #12](https://github.com/o/r/pull/12) ([`4c33fe7`](https://github.com/o/r/commit/4c33fe7))
 ```
 
-Links go inline, on their names. The PR line only when the demo shows
-a change.
+Links go inline, on their names: the URL `demo build` prints (only
+when `publish.url` is set; else name the path). The PR line only when
+the demo shows a change.
 
 After that, chat as usual, in text, unless the user asks for
 demos-only for the whole chat. Never post demos on GitHub.
@@ -43,16 +44,17 @@ demos-only for the whole chat. Never post demos on GitHub.
 ## Where files go
 
 ```
-~/public/demos/<project>-<topic>/    kebab-case: demo-kit-desk-rec
+$(demo config demo.dir)/<project>-<topic>/    kebab-case: demo-kit-desk-rec
   demo.json     the script
   demo.mp4      the result: demo build writes it here
   demo.transcript.srt   its narration, written beside it
   artifacts/    what it's made of: clips, images, audio, slides
 ```
 
-`<project>` is the repo (or app) name. Served at
-`https://<node>/files/demos/<project>-<topic>/demo.mp4`. Never delete
-artifacts; rebuilds overwrite `demo.mp4`.
+`<project>` is the repo (or app) name. `demo.dir` defaults to
+`~/.local/share/demo-kit/demos`; with `publish.url` set, `demo build`
+prints the video's URL too. Never delete artifacts; rebuilds overwrite
+`demo.mp4`.
 
 ## Tools
 
@@ -60,7 +62,7 @@ Record anything on a desk display, driven with `x11-computer-use` or
 `hybrid-browser`:
 
 ```sh
-W=~/public/demos/demo-kit-desk-rec; mkdir -p $W/artifacts
+W=$(demo config demo.dir)/demo-kit-desk-rec; mkdir -p $W/artifacts
 D=$(desk new --no-rec)
 desk rec start -o $W/artifacts/tour.mp4 $D   # act; idle frames drop by themselves
 desk rec stop $D
@@ -76,13 +78,16 @@ Commands and their output need no recording: a `term` scene runs
 them once and draws the typing. For interactive programs (TUIs,
 prompts), record Ghostty with a demo zsh (short prompt, high
 contrast, the user's syntax highlighting, no history), its own
-instance, no tmux:
+instance, no tmux. `S` is this skill's directory, where this file is:
 
 ```sh
-S=$HOME/projects/demo-kit/skills/demo
+S=/path/to/skills/demo
 DISPLAY=$D ZDOTDIR=$S/zsh setsid -f ghostty \
   --config-default-files=false --config-file=$S/ghostty.conf
 ```
+
+No Ghostty: `DISPLAY=$D ZDOTDIR=$S/zsh setsid -f xterm -fa Monospace
+-fs 14`.
 
 Code is drawn, not filmed. Preview what a scene will show:
 
@@ -107,7 +112,8 @@ No inline tags like `[laughs]` in the text: unverified.
 Edit it all: `demo build $W/demo.json`, run from the repo (code paths,
 git and term commands resolve against the current directory). Speech
 is cached: rebuild freely. While editing, `--draft` (half size, no
-captions) and `--scene 3` preview into `~/tmp/demo`.
+captions) and `--scene 3` preview into `demo.scratch`
+(`demo config demo.scratch`).
 
 ## Script
 

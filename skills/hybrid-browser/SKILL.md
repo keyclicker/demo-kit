@@ -12,14 +12,16 @@ what it can't and shows the truth. 3x faster than either alone.
 
 ```sh
 D=$(desk new)                          # records until desk rm
-P=$(agent-chromium start --display $D)  # prints its port
+P=$(desk browser start --display $D)   # prints its DevTools port
 agent-browser connect $P
 # ...work...
-agent-chromium stop $P
+desk browser stop $P
 desk rm $D
 ```
 
-`agent-chromium` is the browser that passes bot checks and plays DRM.
+`desk browser` runs `browser.command` (any Chromium) without
+automation flags: it passes bot checks, and plays DRM where the build
+has Widevine.
 
 - Default: a fresh temp profile, deleted on stop. Agents run in
   parallel

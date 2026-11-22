@@ -4,7 +4,8 @@ demo-kit is extracted from a private, single-machine setup: hand-written Go
 tools for agent displays, recording, an agents' browser and narrated demo
 videos. This plan turns them into a kit that works on anyone's Linux box.
 
-Status: **draft for review**. Nothing is moved yet.
+Status: steps 1-8 done (#2, #4-#9 and this one); step 9, switching the
+original setup over, is private and next.
 
 ## Goals
 
@@ -295,7 +296,7 @@ Each step is one PR.
 5. `deskview`: page, API, VNC proxy, embedded noVNC, `/files/`, audio.
 6. `desk browser`.
 7. `install.sh` and CI (build, tests, per-family install check).
-8. Skills.
+8. Skills and README.
 9. Switch the original setup to demo-kit plus its config (private).
 
 ## Later
