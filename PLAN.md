@@ -85,12 +85,17 @@ defaults.
 [desk]
 size = "1280x960"
 wm = ["xfwm4", "--compositor=off", "--sm-client-disable"]
+host_display = ":0"         # the user's own display, for desk claim; ""
+host_vnc = ""               # its VNC, e.g. "127.0.0.1:5900": an extra,
+                            # interactive deskview tab
+
+[video]                     # shared by desk rec and demo build
 render_node = "auto"        # "auto", a /dev/dri/renderD* path, or "" (CPU)
+encoder = "auto"            # "auto" (VAAPI if a test encode works, else
+                            # x264), "vaapi", "x264"
 
 [record]
 dir = "~/.local/share/demo-kit/recordings"
-encoder = "auto"            # "auto" (VAAPI if usable, else x264),
-                            # "vaapi", "x264"
 
 [demo]
 dir = "~/.local/share/demo-kit/demos"
@@ -100,8 +105,6 @@ sink = ""                   # where `demo say` plays; "" = default output
 
 [deskview]
 addr = "127.0.0.1:8737"
-host_vnc = ""               # e.g. "127.0.0.1:5900": an extra, interactive
-                            # tab for the host's own display
 audio = true
 audio_sink = ""             # sink whose monitor is streamed; "" = default
 
@@ -131,8 +134,10 @@ dir = "~/public/demos"
 scratch = "~/tmp/demo"
 sink = "desktop-speaker"
 
-[deskview]
+[desk]
 host_vnc = "127.0.0.1:5900"
+
+[deskview]
 audio_sink = "desktop-speaker"
 
 [publish]
@@ -181,7 +186,7 @@ One loopback HTTP server, run by a systemd user unit that `install.sh`
 offers to enable.
 
 - `/desktops`: the page. One noVNC tab per desk display (view-only), plus
-  `[deskview] host_vnc` (interactive) when set.
+  `[desk] host_vnc` (interactive) when set.
 - `/api/desktops`: what `desk ls --json` prints.
 - `/vnc/<display>`: WebSocket ↔ VNC TCP proxy in Go. Replaces the
   `websockify` package.

@@ -17,19 +17,19 @@ import (
 
 // ---- Layout ----
 
-const (
-	// stateDir is websockify's TokenFile source: one file per desktop,
-	// named after its display number. tmpfiles.d creates it, with the
-	// user's own :0 as token 0.
-	stateDir = "/run/desk"
+// stateDir holds live state, $XDG_RUNTIME_DIR/demo-kit: one token file
+// per desk display, named after its display number, plus locks and
+// recorder and claim state. Set once by main.
+var stateDir string
 
+const (
 	// Display numbers desk may hand out; VNC port is basePort + N.
 	firstDisplay = 10
 	lastDisplay  = 99
 	basePort     = 5900
 
-	// managedMark tags token files desk wrote. websockify skips it as a
-	// comment.
+	// managedMark tags token files desk wrote; a token file is in
+	// websockify's TokenFile format, the mark a comment to it.
 	managedMark = "# desk: view-only"
 )
 
@@ -49,6 +49,10 @@ type Desktop struct {
 
 	// Recording is the display's running desk rec, if any.
 	Recording *Recording `json:"recording,omitempty"`
+
+	// VNC is where viewers reach the display (host:port); empty for a
+	// host display without desk.host_vnc.
+	VNC string `json:"vnc,omitempty"`
 }
 
 func unitName(n int) string  { return fmt.Sprintf("desk-%d", n) }
@@ -91,7 +95,7 @@ func unitAlive(unit string) bool {
 // records itself (unless --no-rec), and goes away when that agent exits.
 func cmdNew(args []string) error {
 	fs := flag.NewFlagSet("new", flag.ExitOnError)
-	size := fs.String("size", "1280x960", "screen size, WxH")
+	size := fs.String("size", cfg.Desk.Size, "screen size, WxH")
 	noRec := fs.Bool("no-rec", false,
 		"don't record; desk rec start when you want to")
 	fs.Parse(args)
@@ -126,12 +130,16 @@ func cmdNew(args []string) error {
 	unit := unitName(n)
 
 	// Type=notify: systemd-run returns once `desk run` reports ready
-	start := exec.Command("systemd-run", "--user", "--quiet", "--collect",
-		"--unit="+unit, fmt.Sprintf("--description=desk :%d", n),
+	run := []string{"--user", "--quiet", "--collect",
+		"--unit=" + unit, fmt.Sprintf("--description=desk :%d", n),
 		"--property=Type=notify", "--property=TimeoutStartSec=30",
-		fmt.Sprintf("--property=ExecStopPost=%s cleanup %d", self, n),
-		self, "run", fmt.Sprintf("--owner=%d:%d", owner.PID, owner.Start),
+		fmt.Sprintf("--property=ExecStopPost=%s cleanup %d", self, n)}
+	run = append(run, unitEnv()...)
+	run = append(run, self, "run",
+		fmt.Sprintf("--owner=%d:%d", owner.PID, owner.Start),
 		strconv.Itoa(n), *size)
+
+	start := exec.Command("systemd-run", run...)
 	start.Stderr = os.Stderr
 
 	if err := start.Run(); err != nil {
@@ -304,8 +312,9 @@ func cmdRemove(args []string) error {
 
 // ---- Registry ----
 
-// list reads every token file in stateDir, sorted by display. It drops
-// desk entries whose unit is gone: a crashed unit leaves its token.
+// list returns the host display (when it's up) and every desk display
+// in stateDir, sorted by display. It drops desk entries whose unit is
+// gone: a crashed unit leaves its token.
 func list() ([]Desktop, error) {
 	entries, err := os.ReadDir(stateDir)
 	if err != nil {
@@ -313,6 +322,16 @@ func list() ([]Desktop, error) {
 	}
 
 	desks := []Desktop{}
+
+	if n, ok := hostDisplay(); ok {
+		desks = append(desks, Desktop{
+			Display:   fmt.Sprintf(":%d", n),
+			Token:     strconv.Itoa(n),
+			Owner:     readClaim(n),
+			Recording: readRec(n),
+			VNC:       cfg.Desk.HostVNC,
+		})
+	}
 
 	for _, e := range entries {
 		token := e.Name()
@@ -326,29 +345,28 @@ func list() ([]Desktop, error) {
 			continue
 		}
 
-		managed := strings.Contains(string(data), managedMark)
-		if managed {
-			n, err := parseDisplay(token)
-			if err != nil || !unitAlive(unitName(n)) {
-				os.Remove(path)
-				continue
-			}
+		// Only desk's own; anything else is no business of desk's
+		if !strings.Contains(string(data), managedMark) {
+			continue
 		}
 
-		desk := Desktop{Display: ":" + token, Token: token, ViewOnly: managed}
+		n, err := parseDisplay(token)
+		if err != nil || !unitAlive(unitName(n)) {
+			os.Remove(path)
+			continue
+		}
+
+		desk := Desktop{
+			Display:   ":" + token,
+			Token:     token,
+			ViewOnly:  true,
+			Recording: readRec(n),
+			VNC:       fmt.Sprintf("127.0.0.1:%d", basePort+n),
+		}
 		for _, line := range strings.Split(string(data), "\n") {
 			if o, ok := parseOwnerLine(line); ok {
 				desk.Owner = &o
 			}
-		}
-
-		if n, err := strconv.Atoi(token); err == nil {
-			desk.Recording = readRec(n)
-		}
-
-		// A user display's owner is the agent holding its claim
-		if n, err := strconv.Atoi(token); err == nil && !managed {
-			desk.Owner = readClaim(n)
 		}
 
 		desks = append(desks, desk)
@@ -361,6 +379,34 @@ func list() ([]Desktop, error) {
 	})
 
 	return desks, nil
+}
+
+// hostDisplay returns the number of desk.host_display, if one is set
+// and its X server is up.
+func hostDisplay() (int, bool) {
+	if cfg.Desk.HostDisplay == "" {
+		return 0, false
+	}
+
+	n, err := strconv.Atoi(strings.TrimPrefix(cfg.Desk.HostDisplay, ":"))
+	if err != nil || !exists(fmt.Sprintf("/tmp/.X11-unix/X%d", n)) {
+		return 0, false
+	}
+
+	return n, true
+}
+
+// unitEnv passes the caller's XDG dirs to a unit: the user manager's
+// environment may lack them, and the unit must read the same config.
+func unitEnv() []string {
+	var args []string
+	for _, env := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME",
+		"XDG_CACHE_HOME"} {
+		if v, ok := os.LookupEnv(env); ok {
+			args = append(args, "--setenv="+env+"="+v)
+		}
+	}
+	return args
 }
 
 // freeDisplay returns the lowest display number nothing else holds.
