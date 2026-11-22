@@ -10,8 +10,8 @@ what each member looks like as a shell command on X11. Use what's helpful.
 
 ## Display
 
-Work on your own disposable `desk` display. The user watches it
-view-only at `/desktops`; it records itself (`desk rm` saves the video)
+Work on your own disposable `desk` display. The user can watch it
+view-only in `deskview`; it records itself (`desk rm` saves the video)
 and dies with your process.
 
 ```sh
@@ -19,7 +19,8 @@ desk new                    # → :10 (1280x960, GPU)
 desk rm :10                 # when done; prints the video path and URL
 ```
 
-Too sluggish or broken there? Use the user's `:0`, claimed first:
+Too sluggish or broken there? Use the user's own display
+(`desk.host_display`, usually `:0`; X11 sessions only), claimed first:
 `desk claim` (exit 3 = user active: ask, then `desk claim --force`),
 `desk release` and close your windows when done.
 
@@ -28,14 +29,16 @@ Too sluggish or broken there? Use the user's `:0`, claimed first:
 - Terminal: Ghostty as the `demo` skill launches it (its own instance,
   a demo zsh, no tmux). Plain `ghostty` may open in the user's Ghostty
   on `:0`: your keys hit their shell
-- Browsers: fresh profile (`--user-data-dir=$(mktemp -d)`), else they
-  may open in the user's running instance on `:0`
+- Browsers: Chromium through `desk browser start --display :N`
+  (`hybrid-browser` skill); others with a fresh profile
+  (`--user-data-dir=$(mktemp -d)`), else they may open in the user's
+  running instance on `:0`
 
 ## Record by default
 
 Send the video unless the user opted out:
-`![recording](/absolute/path.mp4)` (T3 Code plays it), else its URL
-(`~/public/X` is `https://<node>/files/X`).
+`![recording](/absolute/path.mp4)`, plus the URL `desk rm` prints when
+`publish.url` is set.
 
 Never delete recordings, yours included: they're the user's history of
 what agents did, never noise. A recording the user won't need: just
