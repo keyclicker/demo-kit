@@ -4,6 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>desktops · demo-kit</title>
+    <script>
+      // Under a path prefix, a proxy may serve this page at /prefix too:
+      // relative URLs then resolve against the root. Add the slash first
+      if (!location.pathname.endsWith("/")) {
+        location.replace(location.pathname + "/" + location.search + location.hash);
+      }
+    </script>
     <style>
       /* Always dark: it frames desktops, not a page. */
       :root {
