@@ -157,3 +157,41 @@ func TestCmd(t *testing.T) {
 		t.Error("unknown key printed without error")
 	}
 }
+
+func TestLoadEnv(t *testing.T) {
+	path := filepath.Join(filepath.Dir(isolate(t)), ".env")
+	write(t, path, "# secrets\nexport DK_A=\"one\"\nDK_B=two\nDK_SET=file\n")
+	os.Chmod(path, 0o600)
+	t.Setenv("DK_SET", "env")
+	t.Setenv("DK_A", "")
+	os.Unsetenv("DK_A")
+	t.Setenv("DK_B", "")
+	os.Unsetenv("DK_B")
+
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	for key, want := range map[string]string{"DK_A": "one", "DK_B": "two",
+		"DK_SET": "env"} {
+		if got := os.Getenv(key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestLoadEnvRejects(t *testing.T) {
+	path := filepath.Join(filepath.Dir(isolate(t)), ".env")
+
+	write(t, path, "DK_X=1\n")
+	os.Chmod(path, 0o644)
+	if _, err := Load(); err == nil {
+		t.Error("world-readable .env loaded")
+	}
+
+	write(t, path, "not a pair\n")
+	os.Chmod(path, 0o600)
+	if _, err := Load(); err == nil {
+		t.Error("malformed .env loaded")
+	}
+}

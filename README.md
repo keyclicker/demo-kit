@@ -64,7 +64,8 @@ tab.
 A narrated video:
 
 ```sh
-export OPENROUTER_API_KEY=...      # speech: Gemini TTS via OpenRouter
+# speech: Gemini TTS via OpenRouter; the key once, readable only by you
+(umask 077; echo 'OPENROUTER_API_KEY=sk-or-...' >> ~/.config/demo-kit/.env)
 demo build path/to/demo.json       # writes demo.mp4 beside the script
 demo frames path/to/demo.mp4       # contact sheet, to check it
 ```
@@ -112,7 +113,9 @@ root = "~/.local/share/demo-kit"    # deskview serves it at /files/
 url = ""                            # its public URL: links in output
 ```
 
-Secrets never go in the config: `demo` reads `$OPENROUTER_API_KEY`.
+Secrets never go in the config: they come from the environment, or from
+`~/.config/demo-kit/.env` beside it (`KEY=VALUE` lines, `chmod 600`;
+the environment wins).
 
 ## Reaching deskview from elsewhere
 
