@@ -37,7 +37,8 @@
 //	root = "~/.local/share/demo-kit"            # the dir served at url
 //	url = ""                                    # base URL; "" = no links
 //
-// Secrets never live here: the speech key comes from the environment.
+// Secrets never live here: they come from the environment, or from
+// .env beside this file (KEY=VALUE, chmod 600), which Load reads first.
 package config
 
 import (
@@ -177,9 +178,14 @@ func Path() (string, error) {
 	return filepath.Join(dir, "config.toml"), nil
 }
 
-// Load reads the config file over the defaults. A missing file is not an
-// error; a malformed one, an unknown key or a relative path is.
+// Load reads the config file over the defaults, after putting .env into
+// the environment. A missing file is not an error; a malformed one, an
+// unknown key or a relative path is.
 func Load() (Config, error) {
+	if err := loadEnv(); err != nil {
+		return Config{}, err
+	}
+
 	path, err := Path()
 	if err != nil {
 		return Config{}, err

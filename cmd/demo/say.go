@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/keyclicker/demo-kit/internal/config"
 	"github.com/keyclicker/demo-kit/internal/paths"
 )
 
@@ -174,11 +175,14 @@ func transcode(ctx context.Context, sp speech, tempo float64,
 	return ffmpeg(ctx, "", bytes.NewReader(sp.Audio), args...)
 }
 
-// apiKey returns the OpenRouter key, $OPENROUTER_API_KEY.
+// apiKey returns the OpenRouter key, $OPENROUTER_API_KEY: from the
+// environment, or from .env beside the config (config.Load reads it).
 func apiKey() (string, error) {
 	key := strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
 	if key == "" {
-		return "", errors.New("no OpenRouter key: set $OPENROUTER_API_KEY")
+		path, _ := config.EnvPath()
+		return "", fmt.Errorf("no OpenRouter key: set $OPENROUTER_API_KEY, "+
+			"or put OPENROUTER_API_KEY=... in %s (chmod 600)", path)
 	}
 	return key, nil
 }
