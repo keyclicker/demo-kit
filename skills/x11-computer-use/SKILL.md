@@ -19,6 +19,8 @@ desk new                    # → :10 (1280x960, GPU)
 desk rm :10                 # when done; prints the video path and URL
 ```
 
+The rest (`desk ls`, recording by hand, browsers): `desk --help`.
+
 Too sluggish or broken there? Use the user's own display
 (`desk.host_display`, usually `:0`; X11 sessions only), claimed first:
 `desk claim` (exit 3 = user active: ask, then `desk claim --force`),
@@ -51,11 +53,22 @@ then `desk rec start [-o FILE] :N` and `desk rec stop :N`.
 
 On `:0`, after `desk claim`: `desk rec start :0` ... `desk rec stop :0`.
 
+## Screenshots and focus
+
+Screenshots and zooms go to files in your scratch dir, one name per
+display and moment (`…/x11-10-153012.png`): agents running at once
+must not share one file. View each with your image tool. After every
+action, take a fresh one and check it worked before the next step.
+
+`type` and `key` go to whichever window has focus. Focus yours first:
+`xdotool search --onlyvisible --name 'TITLE' | tail -1` gives one id
+(several may match), then `xdotool windowactivate --sync ID`.
+
 ## Quick map
 | Member | X11 equivalent |
 |---|---|
-| screenshot | `scrot -o /tmp/s.png` (or `import -window root`) |
-| zoom [x0,y0,x1,y1] | `import -window root -crop WxH+x0+y0 png:-` |
+| screenshot | `scrot -o FILE.png` (or `import -window root FILE.png`) |
+| zoom [x0,y0,x1,y1] | `import -window root -crop WxH+x0+y0 FILE.png` |
 | left_click | `xdotool mousemove --sync X Y click 1` |
 | right / middle_click | `click 3` / `click 2` |
 | double / triple_click | `click --repeat 2 1` / `click --repeat 3 1` |
@@ -72,9 +85,9 @@ On `:0`, after `desk claim`: `desk rec start :0` ... `desk rec stop :0`.
 Modifiers on clicks/scroll fit naturally as `keydown ctrl … keyup ctrl` around the action.
 
 ## Things worth keeping in mind
-- Coordinates you emit live in screenshot space; xdotool works in real screen pixels.
-  If screenshots were downscaled, the executor divides by the scale factor (and
-  multiplies `getmouselocation` back for cursor_position).
+- xdotool works in real screen pixels. If you downscale a screenshot,
+  convert its coordinates back yourself (divide by the scale; multiply
+  `getmouselocation` the other way).
 - Long `type` strings tend to go smoother in chunks of a couple hundred chars.
 - A short pause after clicks gives the UI a moment to settle before the next block in a batch.
 - Stuck modifiers after a failed batch are a classic X11 gotcha — a `keyup` in cleanup helps.
