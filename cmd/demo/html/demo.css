@@ -1,0 +1,139 @@
+/* demo's built-in stylesheet for html scenes: the video's palette and
+   font, and a few blocks for diagrams. In a layer, so any style of the
+   page's own wins. The page is 1280 px wide; a frame is 960 tall. */
+
+@layer demo {
+  @font-face {
+    font-family: "JetBrains Mono";
+    src: url(/.demo/mono.ttf);
+    font-weight: 400;
+  }
+  @font-face {
+    font-family: "JetBrains Mono";
+    src: url(/.demo/mono-bold.ttf);
+    font-weight: 700;
+  }
+
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --line: #30363d;
+    --text: #e6edf3;
+    --dim: #7d8590;
+    --accent: #f0b72f;
+    --blue: #79c0ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --mono: "JetBrains Mono", monospace;
+    --sans: "DejaVu Sans", system-ui, sans-serif;
+    --gap: 28px;
+
+    color-scheme: dark;
+    background: var(--bg);
+    color: var(--text);
+    font: 28px/1.4 var(--mono);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 72px 80px; min-height: 100vh; }
+
+  /* demo shows each step as its own render: no transitions halfway */
+  *, *::before, *::after { transition: none !important; }
+
+  /* A step outside an element's data-from / data-to */
+  [data-demo-off] { visibility: hidden !important; }
+
+  /* ---- Text ---- */
+
+  h1, h2, h3 { margin: 0 0 0.5em; line-height: 1.2; }
+  h1 { font-size: 56px; }
+  h2 { font-size: 40px; }
+  h3 { font-size: 30px; }
+  p { margin: 0 0 0.6em; }
+  code { color: var(--blue); }
+  small, .small { font-size: 0.75em; }
+
+  .dim { color: var(--dim); }
+  .accent { color: var(--accent); }
+  .blue { color: var(--blue); }
+  .add { color: var(--green); }
+  .del { color: var(--red); }
+  .big { font-size: 110px; font-weight: 700; line-height: 1.1; }
+
+  /* ---- Layout ---- */
+
+  /* The page's content in the middle of the frame */
+  .center {
+    min-height: calc(100vh - 144px);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+
+  /* Side by side, centered on one line; .down: top to bottom */
+  .flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--gap);
+  }
+  .flow.down { flex-direction: column; }
+
+  /* Under each other, full width */
+  .stack { display: flex; flex-direction: column; gap: var(--gap); }
+
+  /* Columns: --cols, default 3 */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 3), 1fr);
+    gap: var(--gap);
+  }
+
+  /* Between boxes in a .flow: → (or ↓ in .flow.down), and a label */
+  .arrow {
+    color: var(--dim);
+    font-size: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1;
+  }
+  .arrow::after { content: "→"; }
+  .flow.down .arrow::after { content: "↓"; }
+  .arrow > * { font-size: 18px; margin-bottom: 6px; }
+
+  /* ---- Boxes ---- */
+
+  .card {
+    background: var(--panel);
+    border: 2px solid var(--line);
+    border-radius: 12px;
+    padding: 20px 26px;
+  }
+  .card > :last-child { margin-bottom: 0; }
+  .card h3 { font-size: 28px; }
+  .card.accent { border-color: var(--accent); color: inherit; }
+  .card.blue { border-color: var(--blue); color: inherit; }
+  .card.add { border-color: var(--green); color: inherit; }
+  .card.del { border-color: var(--red); color: inherit; }
+
+  /* A small label in a box or beside one */
+  .tag {
+    display: inline-block;
+    padding: 2px 14px;
+    border: 2px solid currentColor;
+    border-radius: 999px;
+    font-size: 20px;
+    vertical-align: middle;
+  }
+
+  table { border-collapse: collapse; }
+  th, td {
+    padding: 12px 22px;
+    border-bottom: 2px solid var(--line);
+    text-align: left;
+  }
+  th { color: var(--dim); font-weight: 400; }
+}

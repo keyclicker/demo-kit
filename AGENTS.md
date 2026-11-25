@@ -7,7 +7,8 @@ How the pieces work and why, for whoever changes them. Users read
 
 - One Go module; each binary is `package main` in `cmd/<bin>/`;
   `internal/` only for what several binaries share: `config` (the one
-  config file), `paths` (XDG dirs), `encode` (H.264 choice)
+  config file), `paths` (XDG dirs), `encode` (H.264 choice), `cdp`
+  (DevTools: calls, events, flat sessions on one socket)
 - A new setting: field + doc in `internal/config` (schema, default,
   `resolve` check), the README's key table. Every binary has
   `<bin> config [KEY]`. Secrets only via env / `.env`, never config
@@ -197,8 +198,8 @@ change to the tool and the skill by that.
   (clips, images, audio)
 - `build script.json`: scenes → one mp4, default `demo.mp4` beside the
   script, its captions beside it as `demo.transcript.srt`. Pictures:
-  `clip` (a video) or one drawn in Go: `image`, `code`, `term`,
-  `slide`. Narration: `say`, or `steps` that each point at the picture
+  `clip` (a video), `html` (a page, rendered headless) or one drawn in
+  Go: `image`, `code`, `term`, `slide`. Narration: `say`, or `steps` that each point at the picture
   (code `focus` and `marks`, an image's `box`, a `zoom` on an image or
   a clip, a term's next command). `voice` per scene, over the script's
   (`Voice.over`). A feature earns its place in videos about other
@@ -269,6 +270,39 @@ change to the tool and the skill by that.
     Non-zero exits warn. They run on every build. Sized and placed as
     code is, once per scene from its last screen (`screen.fit`), so
     nothing jumps mid-scene
+  - `html` (`html.go`): a page rendered by `browser.command`
+    `--headless`, then shown as an `image` (`pictureShots`): paged if
+    tall, `box` spotlit, `zoom` eased. For diagrams nothing real
+    shows; counts toward `slideShare`
+    - Fast: one browser per build (`renderPages`, only with html
+      scenes), started alongside speech; a tab per scene, 4 in
+      parallel (CDP flat sessions, `internal/cdp`). ~0.7 s for a
+      first page, browser start included. DevTools port 0, read from
+      stderr: no port race, no file inside a sandbox
+    - Pages come from a loopback server (`pageServer`): each page's
+      directory under `/p/N/`, so Flatpak's browser loads them and
+      their assets; a missing file warns
+    - Built-ins (`html/demo.css`): the video's palette, JetBrains Mono
+      (served from the embedded font), `.card`, `.flow`/`.arrow`,
+      `.grid`, `.stack`, `.center`, `.tag`. Adopted before the page's
+      scripts run (`addScriptToEvaluateOnNewDocument`), inside `@layer
+      demo`: any style of the page's own wins, whatever its order
+    - Ready (`pageReady`): load, `document.fonts.ready`, the page's
+      own `window.demoReady` promise if set (charts, mermaid), two
+      frames. Viewport 1280x960 (so `100vh` is a frame), DPR 1, sRGB:
+      page pixels are picture pixels
+    - Steps: each renders anew with `<html data-step="k">`;
+      `data-from`/`data-to` elements get `data-demo-off` (hidden,
+      layout kept) off their steps. Without steps everything shows.
+      Builds past the scene's steps warn. Identical screenshots are
+      decoded once
+    - Regions: `box`/`zoom` take `[x, y, w, h]` or a CSS selector
+      (`Region`); a selector is the union of its matches' boxes in
+      that step's state, clamped to the page, resolved before any
+      frame is drawn. None or off the page fails
+    - Uncaught page exceptions warn; wider than 1280 warns (cut)
+    - `demo html FILE [--step N] [--box SEL]`: the scene's PNG, after
+      its size, steps and `#id`s with their boxes
   - `slide` (`slide.go`): `title`, `callout` (110 px, yellow) or `end`,
     plus `text` and `lines`, centered; a slide that doesn't fit fails
     (longer text: markdown as code, which `slideShare` counts too)
@@ -365,6 +399,7 @@ change to the tool and the skill by that.
     plus `N unpriced` (lines cached before receipts, failed lookups,
     which warn)
 - Needs `ffmpeg` (libass, libx264), `ffprobe`, `git`, the DejaVu Sans
-  font (captions); `pw-play` optional. After a change: `go test
+  font (captions); `pw-play` optional; Chromium (`browser.command`)
+  for html scenes. After a change: `go test
   ./...`, `./install.sh --no-deps --yes --only demo`
 

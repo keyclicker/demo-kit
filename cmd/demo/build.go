@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,12 +30,12 @@ type Script struct {
 }
 
 // Scene is one narrated shot with exactly one picture: Clip (a video,
-// optionally From/To seconds), or one drawn here: Image, Code, Term or
-// Slide.
+// optionally From/To seconds), HTML (a page rendered headless), or one
+// drawn here: Image, Code, Term or Slide.
 //
 // Narration is Say, or Steps: lines spoken one after another, each
-// pointing at part of the picture (code Focus and Marks, an image's
-// Box, a Zoom on an image or a clip, a terminal's next command).
+// pointing at part of the picture (code Focus and Marks, an image's or
+// a page's Box, a Zoom on those or a clip, a terminal's next command).
 type Scene struct {
 	Chapter string `json:"chapter,omitempty"` // starts a chapter
 	Say     string `json:"say,omitempty"`
@@ -49,6 +50,7 @@ type Scene struct {
 	Trim     *bool   `json:"trim,omitempty"`     // cut still edges: default
 
 	Image string     `json:"image,omitempty"`
+	HTML  string     `json:"html,omitempty"`
 	Code  *CodeSpec  `json:"code,omitempty"`
 	Term  *TermSpec  `json:"term,omitempty"`
 	Slide *SlideSpec `json:"slide,omitempty"`
@@ -60,19 +62,52 @@ type Scene struct {
 }
 
 // Step is one beat of narration. On code, Focus lines [from, to]
-// light up and Marks box text inside them; on an image, Box [x, y, w,
-// h] (its pixels) is spotlit; on an image or a clip, Zoom [x, y, w, h]
-// (its pixels) fills the frame. Box and Zoom go alone or together.
+// light up and Marks box text inside them; on an image or a page, Box
+// is spotlit; on those or a clip, Zoom fills the frame. Box and Zoom go
+// alone or together.
 type Step struct {
 	Say   string   `json:"say"`
 	Focus []int    `json:"focus,omitempty"`
 	Marks []string `json:"marks,omitempty"`
-	Box   []int    `json:"box,omitempty"`
-	Zoom  []int    `json:"zoom,omitempty"`
+	Box   *Region  `json:"box,omitempty"`
+	Zoom  *Region  `json:"zoom,omitempty"`
 }
 
-// loadScript reads a script, resolving clips and images against its
-// directory. Code and term paths stay relative to the current
+// Region is where a step points: Rect [x, y, w, h] in its picture's
+// pixels, or on a page a CSS Selector, standing for what its matches
+// cover. A page's are resolved to a Rect when it renders.
+type Region struct {
+	Rect     []int
+	Selector string
+}
+
+// UnmarshalJSON reads [x, y, w, h] or "selector".
+func (r *Region) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		return json.Unmarshal(data, &r.Selector)
+	}
+	return json.Unmarshal(data, &r.Rect)
+}
+
+// clone is a copy of r, nil for nil: resolving a copy's selector
+// leaves the script's alone.
+func (r *Region) clone() *Region {
+	if r == nil {
+		return nil
+	}
+	return &Region{Rect: slices.Clone(r.Rect), Selector: r.Selector}
+}
+
+// String is the region as a script says it.
+func (r Region) String() string {
+	if r.Selector != "" {
+		return strconv.Quote(r.Selector)
+	}
+	return fmt.Sprint(r.Rect)
+}
+
+// loadScript reads a script, resolving clips, images and pages against
+// its directory. Code and term paths stay relative to the current
 // directory, like git's.
 func loadScript(path string) (*Script, error) {
 	data, err := os.ReadFile(path)
@@ -103,6 +138,7 @@ func loadScript(path string) (*Script, error) {
 		sc := &s.Scenes[i]
 		sc.num = i + 1
 		sc.Clip, sc.Image = resolve(sc.Clip), resolve(sc.Image)
+		sc.HTML = resolve(sc.HTML)
 
 		v := s.Voice
 		if sc.Voice != nil {
@@ -128,15 +164,15 @@ func loadScript(path string) (*Script, error) {
 // and step fields their picture can't take.
 func (s Scene) check() error {
 	sources := 0
-	for _, set := range []bool{s.Clip != "", s.Image != "", s.Code != nil,
-		s.Term != nil, s.Slide != nil} {
+	for _, set := range []bool{s.Clip != "", s.Image != "", s.HTML != "",
+		s.Code != nil, s.Term != nil, s.Slide != nil} {
 		sources += btoi(set)
 	}
 
 	switch {
 	case sources != 1:
-		return errors.New("needs exactly one of clip, image, code, term, " +
-			"slide")
+		return errors.New("needs exactly one of clip, image, html, code, " +
+			"term, slide")
 	case s.Say != "" && s.Steps != nil:
 		return errors.New("say or steps, not both")
 	case len(s.parts()) == 0 && s.Secs <= 0 && s.Clip == "":
@@ -175,23 +211,43 @@ func (s Scene) checkStep(st Step) error {
 		return errors.New("needs say")
 	case (st.Focus != nil || st.Marks != nil) && s.Code == nil:
 		return errors.New("focus and marks need a code scene")
-	case st.Box != nil && s.Image == "":
-		return errors.New("box needs an image scene (a clip: zoom)")
-	case st.Zoom != nil && s.Image == "" && s.Clip == "":
-		return errors.New("zoom needs an image or a clip scene")
+	case st.Box != nil && s.Image == "" && s.HTML == "":
+		return errors.New("box needs an image or an html scene (a clip: " +
+			"zoom)")
+	case st.Zoom != nil && s.Image == "" && s.HTML == "" && s.Clip == "":
+		return errors.New("zoom needs an image, an html or a clip scene")
 	case slices.Contains(st.Marks, ""):
 		return errors.New("empty mark")
-	case st.Box != nil && !isRegion(st.Box):
-		return errors.New("box: want [x, y, w, h] in the image's pixels")
-	case st.Zoom != nil && !isRegion(st.Zoom):
-		return errors.New("zoom: want [x, y, w, h] in its pixels")
+	}
+
+	for _, r := range []struct {
+		name string
+		r    *Region
+	}{{"box", st.Box}, {"zoom", st.Zoom}} {
+		if err := s.checkRegion(r.r); err != nil {
+			return fmt.Errorf("%s: %w", r.name, err)
+		}
 	}
 	return checkRange("focus", st.Focus)
 }
 
-// isRegion reports whether r is [x, y, w, h], placed and not empty.
-func isRegion(r []int) bool {
-	return len(r) == 4 && r[0] >= 0 && r[1] >= 0 && r[2] >= 1 && r[3] >= 1
+// checkRegion rejects a region that isn't [x, y, w, h], placed and not
+// empty, or a selector off a page; nil is none.
+func (s Scene) checkRegion(r *Region) error {
+	switch {
+	case r == nil:
+		return nil
+	case r.Selector != "" && s.HTML == "":
+		return errors.New("a selector needs an html scene: want [x, y, " +
+			"w, h] in its pixels")
+	case r.Selector != "":
+		return nil
+	case len(r.Rect) != 4 || r.Rect[0] < 0 || r.Rect[1] < 0 ||
+		r.Rect[2] < 1 || r.Rect[3] < 1:
+		return errors.New("want [x, y, w, h] in its pixels, or on a page " +
+			"a CSS selector")
+	}
+	return nil
 }
 
 // decimate is whether a clip drops its idle frames: yes unless told,
@@ -245,6 +301,11 @@ script.json: one object
                      sound, ducked under the voice (and every frame)
     image    path    PNG, JPEG, WebP or GIF (first frame); taller than
                      4:3 pages through
+    html     path    a page, rendered headless (browser.command) 1280
+                     wide, then shown as an image; for diagrams only.
+                     Built-in styles under its own (demo html -h); each
+                     step renders with <html data-step="k">, and
+                     data-from="k" / data-to="k" elements show only then
     code     object  file: path, diff: [git diff args], or tree: dir
                      (depth: levels, default 3); then hunks: [n, ...],
                      lines: [from, to], split: true for a diff side by
@@ -258,17 +319,18 @@ script.json: one object
     say      string  spoken over the scene; it sets the scene's length
     steps    array   [{say, ...}]: lines spoken in turn, each pointing:
                      code: focus: [from, to] lights lines, marks: [text]
-                     boxes text in them; image (in its pixels): box:
-                     [x, y, w, h] spotlights a region; image or clip
-                     (in its pixels): zoom: [x, y, w, h] fills the
-                     frame with a region, eased in; term: one step per
-                     command
+                     boxes text in them; image or html (in its pixels):
+                     box: [x, y, w, h] spotlights a region; image, html
+                     or clip (in its pixels): zoom: [x, y, w, h] fills
+                     the frame with a region, eased in; on html, either
+                     may be a CSS selector instead ("#api"): what its
+                     matches cover; term: one step per command
     voice    object  this scene's voice, over the script's
     secs     number  minimum length; needed when nothing is said, but
                      a clip then plays its own (trimmed) cut
     chapter  string  starts a chapter here
 
-Clips and images resolve against the script; code and term against
+Clips, images and pages resolve against the script; code and term against
 the current directory. The built video is checked for dead air: still
 and silent 1.5 s or longer warns, naming its scene.
 `
@@ -485,6 +547,7 @@ type builder struct {
 	timings  []timing
 	cues     []cue
 	sessions []session // per scene: a term scene's run (runSessions)
+	pages    []*page   // per scene: an html scene's render (renderPages)
 	cuts     []span    // per scene: a clip's cut (cutClips)
 }
 
@@ -500,16 +563,24 @@ func newBuilder(s *Script, work string, draft bool) *builder {
 	return b
 }
 
-// build runs every stage: speech, term sessions, scene videos, scene
-// audio, then one final encode with captions and chapters, checked for
+// build runs every stage: speech and pages, term sessions, scene
+// videos, scene audio, then one final encode with captions and chapters, checked for
 // dead air.
 func (b *builder) build(ctx context.Context, video string) error {
 	if err := b.cutClips(ctx); err != nil {
 		return err
 	}
-	if err := b.speak(ctx); err != nil {
+
+	// Pages render while speech is bought: neither waits on the other
+	var rendering sync.WaitGroup
+	var pagesErr error
+	rendering.Go(func() { pagesErr = b.renderPages(ctx) })
+	err := b.speak(ctx)
+	rendering.Wait()
+	if err := errors.Join(err, pagesErr); err != nil {
 		return err
 	}
+
 	if err := b.runSessions(ctx); err != nil {
 		return err
 	}
@@ -734,13 +805,14 @@ func uncached(scenes []Scene) bool {
 const maxSlideShare = 0.4
 
 // slideShare is the part of scenes' length that slides fill: slide
-// scenes, and markdown shown as code (a slide too long for one).
+// scenes, pages (made, not real), and markdown shown as code (a slide
+// too long for one).
 func slideShare(scenes []Scene, timings []timing) float64 {
 	var slides, total float64
 	for i, s := range scenes {
 		prose := s.Code != nil && strings.EqualFold(filepath.Ext(s.Code.File),
 			".md")
-		if s.Slide != nil || prose {
+		if s.Slide != nil || s.HTML != "" || prose {
 			slides += timings[i].Length
 		}
 		total += timings[i].Length
@@ -811,6 +883,8 @@ func (b *builder) drawnShots(ctx context.Context, i int, s Scene,
 		return sh, nil, err
 	case s.Image != "":
 		return imageShots(s, n, cuts)
+	case s.HTML != "":
+		return pageShots(b.pages[i], s, n, cuts)
 	case s.Term != nil:
 		return b.termShots(i, s, n, cuts), nil, nil
 	default:
@@ -865,24 +939,33 @@ func imageShots(s Scene, n int, cuts []int) (shots, []rect, error) {
 	if s.Steps == nil {
 		return still(p.canvas, nil, n), nil, nil
 	}
+	return pictureShots(func(int) *picture { return p }, s.Steps, n, cuts)
+}
+
+// pictureShots shows pictures, pic(k) on step k: each step's box
+// spotlit and its zoom zoomed into, the view on them. Images have one
+// picture for all steps, pages one per step.
+func pictureShots(pic func(k int) *picture, steps []Step, n int,
+	cuts []int) (shots, []rect, error) {
 
 	// Aimed up front, so a bad box fails before any frame is drawn
-	aims := make([]aim, len(s.Steps))
-	for k, st := range s.Steps {
-		if aims[k], err = p.aim(st); err != nil {
+	aims := make([]aim, len(steps))
+	for k, st := range steps {
+		var err error
+		if aims[k], err = pic(k).aim(st); err != nil {
 			return nil, nil, fmt.Errorf("step %d: %w", k+1, err)
 		}
 	}
 
 	var views []rect
-	if hasZoom(s.Steps) {
+	if hasZoom(steps) {
 		for _, a := range aims {
 			views = append(views, a.view)
 		}
 	}
 
 	return stepShots(cuts, n, func(k int) (stepView, error) {
-		return p.point(aims[k]), nil
+		return pic(k).point(aims[k]), nil
 	}), views, nil
 }
 

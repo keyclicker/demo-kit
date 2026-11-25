@@ -26,6 +26,8 @@ const usageText = `demo: narrated demo and explainer videos, and speech
   demo code --tree [--depth N] [--lines A-B] [--focus A-B] DIR
   demo code --diff [--split] [--hunks 1,3] [--lines A-B] [--focus A-B] -- [git args]
                          draw code as a code scene would, list its parts
+  demo html [--step N] [--box SEL] FILE
+                         render a page as an html scene would, list its ids
   demo say [-o FILE] [--no-play] [--cost] [text...]
                          speak on demo.sink (no text: stdin)
   demo voices            the voice names a script can pick
@@ -58,6 +60,8 @@ func main() {
 		err = cmdBuild(args)
 	case "code":
 		err = cmdCode(args)
+	case "html":
+		err = cmdHTML(args)
 	case "frames":
 		err = cmdFrames(args)
 	case "say":

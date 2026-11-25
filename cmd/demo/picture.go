@@ -23,14 +23,18 @@ type picture struct {
 	at     image.Point
 }
 
-// loadPicture decodes path and fits it: whole into the frame, or to
-// its width if that leaves it taller than the frame.
+// loadPicture decodes path and fits it (fitPicture).
 func loadPicture(path string) (*picture, error) {
 	src, err := loadImage(path)
 	if err != nil {
 		return nil, err
 	}
+	return fitPicture(path, src)
+}
 
+// fitPicture fits src, from path: whole into the frame, or to its
+// width if that leaves it taller than the frame.
+func fitPicture(path string, src image.Image) (*picture, error) {
 	b := src.Bounds()
 	tall := int(math.Round(float64(b.Dy()) * frameW / float64(b.Dx())))
 	if tall > maxDrawH {
@@ -60,12 +64,12 @@ func (p *picture) aim(st Step) (aim, error) {
 	var err error
 
 	if st.Box != nil {
-		if a.box, err = p.region("box", st.Box); err != nil {
+		if a.box, err = p.region("box", st.Box.Rect); err != nil {
 			return a, err
 		}
 	}
 	if st.Zoom != nil {
-		if zoom, err = p.region("zoom", st.Zoom); err != nil {
+		if zoom, err = p.region("zoom", st.Zoom.Rect); err != nil {
 			return a, err
 		}
 	}

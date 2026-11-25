@@ -43,7 +43,7 @@ func clipViews(ctx context.Context, s Scene) ([]rect, error) {
 	for k, st := range s.Steps {
 		v := fullFrame
 		if st.Zoom != nil {
-			r, err := fitRegion(st.Zoom, w, h)
+			r, err := fitRegion(st.Zoom.Rect, w, h)
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", k+1, err)
 			}
