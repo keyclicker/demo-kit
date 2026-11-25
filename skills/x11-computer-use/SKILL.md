@@ -53,7 +53,7 @@ then `desk rec start [-o FILE] :N` and `desk rec stop :N`.
 
 On `:0`, after `desk claim`: `desk rec start :0` ... `desk rec stop :0`.
 
-## Look, act, look
+## Screenshots and focus
 
 Screenshots and zooms go to files in your scratch dir, one name per
 display and moment (`…/x11-10-153012.png`): agents running at once
