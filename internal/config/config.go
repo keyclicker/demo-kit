@@ -21,6 +21,7 @@
 //
 //	[record]
 //	dir = "~/.local/share/demo-kit/recordings"  # desk recordings
+//	audio = true                                # record sound too
 //
 //	[demo]
 //	dir = "~/.local/share/demo-kit/demos"       # demo workspaces
@@ -117,6 +118,11 @@ type Browser struct {
 type Record struct {
 	// Dir is where recordings go unless a command names a file.
 	Dir string `toml:"dir"`
+
+	// Audio records sound with the picture: a desk display's own sink
+	// (desk-N), or the default output's on the host display. Needs
+	// PipeWire and a Pulse server (pipewire-pulse); else video only.
+	Audio bool `toml:"audio"`
 }
 
 // Demo configures the demo tool.
@@ -248,7 +254,7 @@ func Defaults() (Config, error) {
 			Command:     []string{"chromium"},
 			MainProfile: filepath.Join(home, ".config", "chromium"),
 		},
-		Record: Record{Dir: filepath.Join(data, "recordings")},
+		Record: Record{Dir: filepath.Join(data, "recordings"), Audio: true},
 		Demo: Demo{
 			Dir:     filepath.Join(data, "demos"),
 			Scratch: filepath.Join(cache, "scratch"),

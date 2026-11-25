@@ -437,6 +437,7 @@ func cmdRecRun(args []string) error {
 	}
 
 	r := &recorder{
+		n:       n,
 		display: ":" + strconv.Itoa(n),
 		video:   *video,
 		env:     append(os.Environ(), "DISPLAY=:"+strconv.Itoa(n)),
@@ -501,6 +502,7 @@ func cmdRecRun(args []string) error {
 
 // recorder records one video as a run of segments.
 type recorder struct {
+	n       int
 	display string
 	video   string
 	env     []string
@@ -516,7 +518,7 @@ func (r *recorder) resume() error {
 	}
 
 	path := partPath(r.video, len(r.parts)+1)
-	seg, err := startSegment(r.display, path, r.env)
+	seg, err := startSegment(r.display, path, audioInput(r.n), r.env)
 	if err != nil {
 		return err
 	}

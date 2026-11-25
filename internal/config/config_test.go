@@ -79,6 +79,9 @@ url = "https://node/files/"
 	if c.Record.Dir != home+"/public/recordings" {
 		t.Errorf("record.dir = %q", c.Record.Dir)
 	}
+	if !c.Record.Audio {
+		t.Error("record.audio = false: unset keys keep defaults")
+	}
 	if c.Demo.Voice != "Umbriel" {
 		t.Errorf("demo.voice = %q: unset keys keep defaults", c.Demo.Voice)
 	}

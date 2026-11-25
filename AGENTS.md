@@ -44,6 +44,11 @@ the finished videos: path, plus a link when `publish.url` is set);
   - A silent VNC client of its own, logged in but never requesting
     updates: with no client, Xvnc ticks Present's vblank at 1 Hz
     (`VNCServerST::startFrameClock`), so GL apps and browsers crawl
+  - Its own sink, `desk-N` (`audio.go`), unless `record.audio` is
+    off: a `pw-loopback` whose playback side goes to the default
+    output (passive), so it records apart yet still plays and streams
+    as before. Apps reach it with `PULSE_SINK=desk-N`. No PipeWire: no
+    sink
 - Registry: `$XDG_RUNTIME_DIR/demo-kit` (`stateDir`, 0700): one token
   file per desk display, named by display, in websockify's TokenFile
   format. Each carries a `# desk: view-only` line; `desk ls` drops
@@ -72,6 +77,12 @@ the finished videos: path, plus a link when `publish.url` is set);
     its test encode works, else x264; picked once per process), to
     `record.dir/<time>-desk-N.mp4` or `-o FILE`. `start`
     returns once ffmpeg reports progress (`-progress pipe:1`)
+  - Sound (`audioInput`): ffmpeg's pulse input, AAC; wall-clock
+    timestamps as x11grab's, so in sync. A desk display records
+    `desk-N.monitor`, the host display the default output's. Video
+    only (logged) without `record.audio`, a Pulse server
+    (pipewire-pulse) or ffmpeg's pulse input (`pulseCheck`), or the
+    sink. Not pw-record into a pipe: its samples carry no clock
   - Segments: pause (`SIGUSR1`) finalizes `FILE.partK.mp4`, resume
     (`SIGUSR2`) starts the next; stop joins them (concat demuxer,
     `-c copy`). `KillMode=mixed`: stop signals only `desk rec run`
@@ -103,6 +114,7 @@ and learn it from the `hybrid-browser` skill.
 - `browser.command`, any Chromium, not agent-browser's Chrome for
   Testing: no automation flags (`navigator.webdriver` false). Flatpak
   is just config (`["flatpak", "run", "org.chromium.Chromium"]`)
+- Gets `PULSE_SINK=desk-N` when that sink is up: its sound is recorded
 - A browser is its DevTools port, never a process found in `/proc`:
   launchers that fork work, and the user's own Chromium can't be hit
 - Profiles: `temp` (default): fresh, deleted on exit, any number in
@@ -158,6 +170,7 @@ as the proxy strips the prefix and both forms arrive as `/`.
   `pw-record` of `deskview.audio_sink`'s monitor (default: the default
   output), only while someone listens; a listener lagging 160 ms drops
   chunks. One stream per login session: every display plays into it
+  (desk displays through their `desk-N` sink's loopback)
 - Page side: an AudioWorklet keeps ~80 ms buffered, skips back when
   lag passes 250 ms, reconnects every 1 s. 🔊 also unmutes noVNC's
   bell. No PipeWire or `deskview.audio = false`: `api/audio` says why,

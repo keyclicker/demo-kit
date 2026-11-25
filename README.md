@@ -57,6 +57,10 @@ agent-browser connect $P
 desk browser stop $P
 ```
 
+Sound: each display has its own sink, `desk-10` for `:10`. Start apps
+with `PULSE_SINK=desk-10` and their sound lands in its recording (and
+still plays on your output); `desk browser` does it for you.
+
 Watch: open `http://127.0.0.1:8737/` (deskview). Agent displays are
 view-only; set `desk.host_vnc` to get your own display as an interactive
 tab.
@@ -96,6 +100,8 @@ main_profile = "~/.config/chromium" # desk browser --profile main
 
 [record]
 dir = "~/.local/share/demo-kit/recordings"
+audio = true                        # sound too: needs PipeWire with
+                                    # pipewire-pulse, else video only
 
 [demo]
 dir = "~/.local/share/demo-kit/demos"   # demo workspaces
@@ -159,6 +165,8 @@ directory yourself.
 - Recordings use x264 on a GPU machine: VAAPI's test encode failed;
   `video.encoder = "vaapi"` shows why
 - `desk claim :0` refuses: the host runs Wayland; use `desk new`
+- A recording has no sound: `journalctl --user -u desk-rec-10` says
+  why; the app needs `PULSE_SINK=desk-10`
 
 ## License
 
