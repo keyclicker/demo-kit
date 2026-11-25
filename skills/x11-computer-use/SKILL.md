@@ -28,6 +28,8 @@ Too sluggish or broken there? Use the user's own display
 
 - Prefix every command: `DISPLAY=:10 …` (shell state doesn't persist)
 - Start apps detached: `DISPLAY=:10 setsid -f xterm`
+- Sound: `PULSE_SINK=desk-10` too (the display's own sink), so the
+  recording hears it. Not on `:0`: it records what the user hears
 - Terminal: Ghostty as the `demo` skill launches it (its own instance,
   a demo zsh, no tmux). Plain `ghostty` may open in the user's Ghostty
   on `:0`: your keys hit their shell

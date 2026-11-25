@@ -22,8 +22,8 @@ import (
 
 const background = "#2b2f36"
 
-// cmdRun is the main process of a desk-N unit: it runs Xvnc and xfwm4,
-// registers the noVNC token, and exits once its owner does.
+// cmdRun is the main process of a desk-N unit: it runs Xvnc, xfwm4 and
+// the display's sink, registers the token, and exits once its owner does.
 // Recording is desk-rec-N's job (rec.go). `desk cleanup` undoes it on stop.
 func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
@@ -142,6 +142,13 @@ func cmdRun(args []string) error {
 		log.Printf("frame clock: %v (vsynced apps run at 1 fps)", err)
 	} else {
 		defer clock.Close()
+	}
+
+	// ---- Sound ----
+
+	// No sink is no reason to lose the desktop: recordings go silent
+	if err := startSink(n); err != nil {
+		log.Printf("sound: %v (recordings without it)", err)
 	}
 
 	stopAll := func() {

@@ -230,6 +230,12 @@ func cmdBrowserSupervise(args []string) error {
 
 	cmd := exec.Command(command[0], append(browserArgs, args[1:]...)...)
 	cmd.Env = append(os.Environ(), "DISPLAY="+r.get("display"))
+
+	// Sound into the display's sink, so its recording hears the page
+	if n, err := parseDisplay(r.get("display")); err == nil &&
+		sinkUp(sinkName(n)) {
+		cmd.Env = append(cmd.Env, "PULSE_SINK="+sinkName(n))
+	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	runErr := cmd.Run()
 

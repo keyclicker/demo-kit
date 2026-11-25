@@ -60,10 +60,12 @@ type segment struct {
 	done chan struct{} // closed once ffmpeg exits
 }
 
-// startSegment grabs display (":N") into path. It returns once ffmpeg
-// reports its first progress, so a display it can't open fails here.
-// env must carry the display's XAUTHORITY.
-func startSegment(display, path string, env []string) (*segment, error) {
+// startSegment grabs display (":N") into path, with sound from the
+// ffmpeg input audio (audioInput; nil: video only). It returns once
+// ffmpeg reports its first progress, so a display it can't open fails
+// here. env must carry the display's XAUTHORITY.
+func startSegment(display, path string, audio, env []string) (*segment,
+	error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
@@ -76,9 +78,13 @@ func startSegment(display, path string, env []string) (*segment, error) {
 	args := []string{"-nostdin", "-loglevel", "error",
 		"-nostats", "-progress", "pipe:1", "-y"}
 	args = append(args, enc.Device()...)
-	args = append(args, "-f", "x11grab", "-framerate", "30", "-i", display,
-		"-vf", recordFilter(enc))
+	args = append(args, "-f", "x11grab", "-framerate", "30", "-i", display)
+	args = append(args, audio...)
+	args = append(args, "-vf", recordFilter(enc))
 	args = append(args, enc.Codec(28)...)
+	if audio != nil {
+		args = append(args, "-c:a", "aac", "-b:a", "160k")
+	}
 	args = append(args, "-movflags", "+faststart", path)
 
 	cmd := exec.Command("ffmpeg", args...)
