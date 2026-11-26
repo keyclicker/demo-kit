@@ -353,7 +353,9 @@ change to the tool and the skill by that.
   - `tree` (`--tree DIR`, `depth`, default 3): a file tree, drawn as
     numbered lines (`tree.go`), so lines, focus, marks and steps work
     as on code. In a repo it lists what git tracks or would (ignored
-    files out), else (or in a directory git ignores) every file off
+    files out, `ls-files -z`), as the worktree has it: files deleted
+    there left out, each once, a nested repository one directory line;
+    else (or in a directory git ignores) every file off
     dot-names, a symlinked DIR walked where it points; directories at
     the depth limit fold into one line with a file count
   - `split` (`--split`): a diff in two 640 px panes, old left, new right

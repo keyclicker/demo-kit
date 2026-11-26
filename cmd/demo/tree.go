@@ -31,13 +31,15 @@ type node struct {
 
 func newNode() *node { return &node{dirs: map[string]*node{}} }
 
-// add puts a slash-separated file path under n.
-func (n *node) add(path string) {
-	n.count++
+// add puts a slash-separated file path under n; one ending in a slash
+// is a directory git lists whole, without its files (a nested
+// repository). It reports whether a file was added.
+func (n *node) add(path string) bool {
 	dir, rest, found := strings.Cut(path, "/")
 	if !found {
+		n.count++
 		n.files = append(n.files, path)
-		return
+		return true
 	}
 
 	child := n.dirs[dir]
@@ -45,7 +47,12 @@ func (n *node) add(path string) {
 		child = newNode()
 		n.dirs[dir] = child
 	}
-	child.add(rest)
+
+	if rest == "" || !child.add(rest) {
+		return false
+	}
+	n.count++
+	return true
 }
 
 // readTree lists dir as a tree, depth levels deep: what git tracks or
@@ -84,7 +91,7 @@ func readTree(ctx context.Context, dir string, depth int) (*listing, error) {
 	}
 
 	file := &codeFile{Path: homePath(dir), Hunks: []*hunk{h},
-		Status: plural(len(paths), "file")}
+		Status: plural(root.count, "file")}
 	return &listing{Files: []*codeFile{file}, Tree: true}, nil
 }
 
@@ -97,14 +104,39 @@ func treeFiles(ctx context.Context, dir string) ([]string, error) {
 	return walkFiles(dir)
 }
 
-// gitFiles lists what git tracks or would track under dir; nil outside
-// a repo.
+// gitFiles lists what git tracks or would track under dir, sorted,
+// each once: not those deleted from the worktree (still in the index),
+// and an untracked nested repository as "name/". nil outside a repo.
 func gitFiles(ctx context.Context, dir string) []string {
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "ls-files",
-		"--cached", "--others", "--exclude-standard", "-z")
-	out, err := cmd.Output()
+	files, err := lsFiles(ctx, dir, "--cached", "--others",
+		"--exclude-standard")
 	if err != nil {
 		return nil
+	}
+	deleted, err := lsFiles(ctx, dir, "--deleted")
+	if err != nil {
+		return nil
+	}
+
+	gone := map[string]bool{}
+	for _, f := range deleted {
+		gone[f] = true
+	}
+
+	files = slices.DeleteFunc(files, func(f string) bool { return gone[f] })
+	slices.Sort(files)
+	return slices.Compact(files) // an unmerged file lists per stage
+}
+
+// lsFiles runs `git ls-files -z` in dir with args.
+func lsFiles(ctx context.Context, dir string, args ...string) ([]string,
+	error) {
+
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir,
+		"ls-files", "-z"}, args...)...)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
 	}
 
 	var files []string
@@ -113,7 +145,7 @@ func gitFiles(ctx context.Context, dir string) []string {
 			files = append(files, f)
 		}
 	}
-	return files
+	return files, nil
 }
 
 // walkFiles lists every file under dir, skipping dot-names. A symlinked
@@ -163,7 +195,7 @@ func treeLines(n *node, prefix string, depth int) []string {
 		branch, next := entryGlyphs(i == total-1)
 		child := n.dirs[d]
 
-		if depth <= 1 {
+		if depth <= 1 && child.count > 0 {
 			lines = append(lines, fmt.Sprintf("%s%s%s/%s…%s", prefix,
 				branch, d, treeNote, plural(child.count, "file")))
 			continue
