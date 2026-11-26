@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/keyclicker/demo-kit/internal/config"
@@ -77,6 +78,18 @@ type openaiTTS struct {
 	base   string // e.g. "https://openrouter.ai/api/v1"
 	keyEnv string // where key came from; "" means none is sent
 	key    string
+
+	stderr     io.Writer // warnings; nil is os.Stderr
+	rateWarned sync.Once // a PCM rate assumed: said once per run
+}
+
+// warnf prints a build warning, "demo: " first.
+func (e *openaiTTS) warnf(format string, args ...any) {
+	w := e.stderr
+	if w == nil {
+		w = os.Stderr
+	}
+	fmt.Fprintf(w, "demo: "+format+"\n", args...)
 }
 
 // ttsClient gives up on a stalled request: a demo build must end
@@ -134,8 +147,8 @@ func (e *openaiTTS) synthesize(ctx context.Context, v Voice,
 			return sp, err
 		}
 
-		fmt.Fprintf(os.Stderr, "demo: speech API busy, retry %d/%d in %s\n",
-			attempt, maxAttempts-1, wait)
+		e.warnf("speech API busy, retry %d/%d in %s", attempt,
+			maxAttempts-1, wait)
 		select {
 		case <-ctx.Done():
 			return speech{}, ctx.Err()
@@ -177,9 +190,18 @@ func (e *openaiTTS) synthesizeOnce(ctx context.Context, model string,
 		return speech{}, 0, fmt.Errorf("%s: empty audio", model)
 	}
 
+	input, assumed := pcmInput(res.Header.Get("Content-Type"))
+	if assumed {
+		e.rateWarned.Do(func() {
+			e.warnf("%s sent PCM without a rate: assumed %s Hz, OpenAI's. "+
+				"Speech too fast or slow? The server's rate differs",
+				e.base, defaultPCMRate)
+		})
+	}
+
 	return speech{
 		Audio: audio,
-		Input: pcmInput(res.Header.Get("Content-Type")),
+		Input: input,
 		GenID: res.Header.Get("X-Generation-Id"),
 	}, 0, nil
 }
@@ -261,21 +283,25 @@ func (e *openaiTTS) call(ctx context.Context, method, path string,
 
 // ===== Decoding =====
 
+// defaultPCMRate is the rate of PCM that names none: OpenAI's `pcm`.
+const defaultPCMRate = "24000"
+
 // pcmInput returns ffmpeg input flags for raw PCM content types
 // ("audio/pcm;rate=24000;channels=1"), s16le assumed; nil for
-// containers ffmpeg can probe itself.
-func pcmInput(contentType string) []string {
+// containers ffmpeg can probe itself. assumed is true when the type
+// names no rate and defaultPCMRate stands in: a guess, worth a word.
+func pcmInput(contentType string) (flags []string, assumed bool) {
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil || (mediaType != "audio/pcm" && mediaType != "audio/l16") {
-		return nil
+		return nil, false
 	}
 
 	rate, channels := params["rate"], params["channels"]
 	if rate == "" {
-		rate = "24000"
+		rate, assumed = defaultPCMRate, true
 	}
 	if channels == "" {
 		channels = "1"
 	}
-	return []string{"-f", "s16le", "-ar", rate, "-ac", channels}
+	return []string{"-f", "s16le", "-ar", rate, "-ac", channels}, assumed
 }

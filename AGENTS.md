@@ -401,8 +401,9 @@ change to the tool and the skill by that.
   program would be another `ttsEngine`, plus a `tts` key choosing it
   - `response_format: pcm`, the only format
   every provider takes (Gemini TTS refuses mp3). Rate and channels come
-  from `Content-Type` (`pcmInput`); ffmpeg decodes to a 48 kHz wav,
-  `atempo` speeds it up (pitch kept)
+  from `Content-Type` (`pcmInput`; no rate: 24 kHz, OpenAI's, warned
+  once per run: a server at its model's own rate plays fast or slow);
+  ffmpeg decodes to a 48 kHz wav, `atempo` speeds it up (pitch kept)
   - Cache: `$XDG_CACHE_HOME/demo-kit/tts/<sha256(engine, voice,
     text)>.wav`: rebuilds only pay for changed lines. The engine's
     `name` (`openaiTTS`: its URL) is in the key: servers share model
