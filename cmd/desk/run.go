@@ -67,10 +67,10 @@ func cmdRun(args []string) error {
 	cookie := make([]byte, 16)
 	rand.Read(cookie)
 
+	add := fmt.Sprintf("add %s MIT-MAGIC-COOKIE-1 %s", display,
+		hex.EncodeToString(cookie))
 	for _, file := range []string{serverAuth, userAuth} {
-		err := xauth(file, "add", display, "MIT-MAGIC-COOKIE-1",
-			hex.EncodeToString(cookie))
-		if err != nil {
+		if err := xauth(file, add); err != nil {
 			return err
 		}
 	}
@@ -246,13 +246,16 @@ func writeToken(n int, owner Owner) error {
 	return os.Rename(tmp, tokenPath(n))
 }
 
-// xauth runs `xauth -q -f file args...`; xauth locks the file itself.
-func xauth(file string, args ...string) error {
-	cmd := exec.Command("xauth", append([]string{"-q", "-f", file}, args...)...)
+// xauth runs xauth commands on file, fed on stdin (`source -`): argv
+// is world-readable in /proc, a cookie must not be. xauth locks the
+// file itself.
+func xauth(file string, commands ...string) error {
+	cmd := exec.Command("xauth", "-q", "-f", file, "source", "-")
+	cmd.Stdin = strings.NewReader(strings.Join(commands, "\n") + "\n")
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("xauth %v: %w", args, err)
+		return fmt.Errorf("xauth %s: %w", file, err)
 	}
 
 	return nil
@@ -292,8 +295,8 @@ func cmdCleanup(args []string) error {
 	os.Remove(serverAuthPath(n))
 
 	if home, err := os.UserHomeDir(); err == nil {
-		xauth(filepath.Join(home, ".Xauthority"), "remove",
-			":"+strconv.Itoa(n))
+		xauth(filepath.Join(home, ".Xauthority"),
+			"remove :"+strconv.Itoa(n))
 	}
 
 	// A killed Xvnc leaves its lock and socket; keep a live server's

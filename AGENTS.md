@@ -44,7 +44,9 @@ the finished videos: path, plus a link when `publish.url` is set);
     Terminals too (Ghostty, xterm): sizing themselves to the screen
     (`-maximized`) pushes xfwm4's frame off its right edge
   - Fresh MIT cookie, added to `~/.Xauthority` so agents' clients
-    connect with just `DISPLAY`
+    connect with just `DISPLAY`. Every xauth call goes through `xauth`
+    (`run.go`), commands on stdin (`source -`): argv is world-readable
+    in `/proc`
   - A silent VNC client of its own, logged in but never requesting
     updates: with no client, Xvnc ticks Present's vblank at 1 Hz
     (`VNCServerST::startFrameClock`), so GL apps and browsers crawl
