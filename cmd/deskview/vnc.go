@@ -86,7 +86,9 @@ func (p vncProxy) vncAddr(ctx context.Context, token string) (string, bool) {
 // sameOrigin accepts a WebSocket from the page itself: the Origin host is
 // the request's host, or the host a proxy forwarded (X-Forwarded-Host),
 // as tailscale serve and reverse proxies may rewrite Host. No Origin is
-// not a browser, so no CSRF risk.
+// not a browser, so no CSRF risk. An Origin with no host (`null` from
+// sandboxed iframes and data: pages, file://) is any page: refused.
+// Hosts compare exactly, port included.
 func sameOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -94,9 +96,15 @@ func sameOrigin(r *http.Request) bool {
 	}
 
 	u, err := url.Parse(origin)
-	if err != nil {
+	if err != nil || u.Host == "" {
 		return false
 	}
 
-	return u.Host == r.Host || u.Host == r.Header.Get("X-Forwarded-Host")
+	if u.Host == r.Host {
+		return true
+	}
+
+	// An absent header is "": never let it match
+	fwd := r.Header.Get("X-Forwarded-Host")
+	return fwd != "" && u.Host == fwd
 }
