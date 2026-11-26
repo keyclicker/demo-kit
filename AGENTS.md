@@ -360,6 +360,16 @@ change to the tool and the skill by that.
     `Umbriel`, brisk male instructions, tempo 1.2 (~18 chars/s); second
     choice `Puck`. Flash, not lite: lite is cheaper, these are listened
     to. Script field `voice`: `name`, `instructions`, `tempo`, `model`
+  - Flags (`ttsFlags`, on `build` and `say`): one per config `tts` key
+    (`--tts-url`, `--tts-key-env`, `--model`, `--voice`,
+    `--instructions`, `--tempo`), each defaulting to the config's
+    value. `overrideTTS` checks the result as the file's is
+    (`TTS.Check`) and makes it the config in effect (`configure`), so
+    the engine and `defaultVoice` follow: one run in another voice or
+    on another engine, the file untouched. A script's own `voice`
+    still goes over them. Named flags, not a generic `--set
+    KEY=VALUE`: speech is what gets a one-off, and `-h` shows each
+    with the config's value
   - Voices (`voices.go`): no voices API, so `geminiVoices` lists the 30
     Gemini names (all tried on flash) with Google's style; `demo
     voices` prints them. A Gemini model with another name fails at

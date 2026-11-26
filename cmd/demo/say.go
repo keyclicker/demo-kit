@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/keyclicker/demo-kit/internal/config"
 	"github.com/keyclicker/demo-kit/internal/paths"
 )
 
@@ -174,7 +175,7 @@ func transcode(ctx context.Context, sp speech, tempo float64,
 // cmdSay speaks text aloud on demo.sink, and saves it with -o.
 func cmdSay(args []string) error {
 	fs := flag.NewFlagSet("say", flag.ExitOnError)
-	v := voiceFlags(fs)
+	tts := ttsFlags(fs)
 	out := fs.StringP("out", "o", "", "also save the audio here (format by extension)")
 	noPlay := fs.Bool("no-play", false, "don't play, e.g. with -o")
 	showCost := fs.Bool("cost", false, "print the request's cost in USD")
@@ -186,7 +187,10 @@ func cmdSay(args []string) error {
 	}
 	fs.Parse(args)
 
-	if err := checkVoice(*v); err != nil {
+	if err := overrideTTS(*tts); err != nil {
+		return err
+	}
+	if err := checkVoice(defaultVoice); err != nil {
 		return err
 	}
 
@@ -197,9 +201,9 @@ func cmdSay(args []string) error {
 
 	ctx, stop := signalContext()
 	defer stop()
-	tts := newEngine(cfg.TTS)
+	engine := newEngine(cfg.TTS)
 
-	sp, err := speak(ctx, tts, *v, text)
+	sp, err := speak(ctx, engine, defaultVoice, text)
 	if err != nil {
 		return err
 	}
@@ -217,7 +221,7 @@ func cmdSay(args []string) error {
 	}
 
 	if *showCost {
-		fmt.Fprintf(os.Stderr, "demo: %s\n", billOf(ctx, tts, []spoken{sp}))
+		fmt.Fprintf(os.Stderr, "demo: %s\n", billOf(ctx, engine, []spoken{sp}))
 	}
 
 	return nil
@@ -245,17 +249,44 @@ func play(ctx context.Context, wav string) error {
 	return nil
 }
 
-// voiceFlags registers --model, --voice, --instructions and --tempo.
-func voiceFlags(fs *flag.FlagSet) *Voice {
-	v := defaultVoice
-	fs.StringVar(&v.Model, "model", v.Model, "TTS model, as tts.url names it")
-	fs.StringVar(&v.Name, "voice", v.Name,
-		"voice name (demo voices); empty: model default")
-	fs.StringVar(&v.Instructions, "instructions", v.Instructions,
-		"delivery direction (Gemini, Fish, OpenAI); empty: none")
-	fs.Float64Var(&v.Tempo, "tempo", v.Tempo,
-		"speed-up, pitch kept (ffmpeg atempo)")
-	return &v
+// ---- Speech flags ----
+
+// ttsFlags registers a flag per config tts key, each defaulting to the
+// config's value: one command in another voice, or on another engine,
+// with the file left alone. overrideTTS puts the parsed result in effect.
+func ttsFlags(fs *flag.FlagSet) *config.TTS {
+	t := cfg.TTS
+
+	// The engine
+	fs.StringVar(&t.URL, "tts-url", t.URL,
+		"speech API base, OpenAI-compatible (tts.url)")
+	fs.StringVar(&t.KeyEnv, "tts-key-env", t.KeyEnv,
+		"env var of its key (tts.key_env); empty: none sent")
+
+	// The voice
+	fs.StringVar(&t.Model, "model", t.Model,
+		"TTS model, as the API names it (tts.model)")
+	fs.StringVar(&t.Voice, "voice", t.Voice,
+		"voice name (tts.voice; demo voices); empty: model default")
+	fs.StringVar(&t.Instructions, "instructions", t.Instructions,
+		"delivery direction (tts.instructions); empty: none")
+	fs.Float64Var(&t.Tempo, "tempo", t.Tempo,
+		"speed-up, pitch kept (tts.tempo)")
+
+	return &t
+}
+
+// overrideTTS makes t this command's config tts, checked as the file's
+// is: the engine and the voice scripts start from.
+func overrideTTS(t config.TTS) error {
+	if err := t.Check(); err != nil {
+		return err
+	}
+
+	c := cfg
+	c.TTS = t
+	configure(c)
+	return nil
 }
 
 // ---- Cost ----

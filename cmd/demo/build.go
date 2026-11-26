@@ -236,7 +236,7 @@ const scriptHelp = `
 script.json: one object
   title    string  the video's title (and its first chapter's name)
   voice    object  name (demo voices), instructions, tempo, model;
-                   defaults are tuned
+                   each over config tts, or this build's flags
   scenes   array   played in order, each with one picture:
     clip     path    any video; from, to: seconds to keep. Still edges
                      go (trim: false keeps them), idle frames go
@@ -365,6 +365,7 @@ func cmdBuild(args []string) error {
 	keep := fs.Bool("keep", false, "keep the work dir (scenes, captions)")
 	draft := fs.Bool("draft", false, "preview fast: half size, no captions")
 	only := fs.String("scene", "", "preview only these scenes, e.g. 3 or 2,5")
+	tts := ttsFlags(fs)
 
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: demo build [flags] script.json\n")
@@ -376,6 +377,11 @@ func cmdBuild(args []string) error {
 	if fs.NArg() != 1 {
 		fs.Usage()
 		os.Exit(2)
+	}
+
+	// Before the script loads: its voices start from config tts
+	if err := overrideTTS(*tts); err != nil {
+		return err
 	}
 
 	ctx, stop := signalContext()

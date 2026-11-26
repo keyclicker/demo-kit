@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	flag "github.com/spf13/pflag"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -87,6 +88,77 @@ func TestCheckVoice(t *testing.T) {
 	kokoro.Tempo = 9
 	if err := checkVoice(kokoro); err == nil {
 		t.Error("tempo 9 passed")
+	}
+}
+
+// Flags override config tts for one command: the engine, and the voice
+// scripts start from
+func TestTTSFlags(t *testing.T) {
+	file := cfg
+	t.Cleanup(func() { configure(file) })
+
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	tts := ttsFlags(fs)
+	if *tts != file.TTS {
+		t.Fatalf("defaults %+v, want config tts %+v", *tts, file.TTS)
+	}
+
+	err := fs.Parse([]string{"--tts-url", "http://127.0.0.1:8880/v1/",
+		"--tts-key-env", "", "--model", "kokoro", "--voice", "am_michael",
+		"--instructions", "", "--tempo", "1.4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := overrideTTS(*tts); err != nil {
+		t.Fatal(err)
+	}
+
+	want := Voice{Model: "kokoro", Name: "am_michael", Tempo: 1.4}
+	if defaultVoice != want {
+		t.Errorf("voice %+v, want %+v", defaultVoice, want)
+	}
+
+	engine := newEngine(cfg.TTS)
+	if got := engine.name(); got != "openai http://127.0.0.1:8880/v1" {
+		t.Errorf("engine %q", got)
+	}
+	if err := engine.ready(); err != nil {
+		t.Errorf("no key wanted, yet: %v", err)
+	}
+
+	// A script starts from the flags; what it sets itself still wins
+	path := filepath.Join(t.TempDir(), "s.json")
+	os.WriteFile(path, []byte(`{"scenes": [
+		{"say": "a", "slide": {"title": "T"}},
+		{"say": "b", "slide": {"title": "T"},
+			"voice": {"name": "bm_george"}}]}`), 0o644)
+
+	script, err := loadScript(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := *script.Scenes[0].Voice; v != want {
+		t.Errorf("scene 1 voice %+v, want the flags' %+v", v, want)
+	}
+	if v := script.Scenes[1].Voice; v.Name != "bm_george" ||
+		v.Model != "kokoro" {
+		t.Errorf("scene 2 voice %+v, want its own name on kokoro", v)
+	}
+
+	// A flag's value is checked as the file's
+	for _, bad := range [][]string{
+		{"--tempo", "9"}, {"--tts-url", "kokoro"}, {"--model", ""},
+		{"--tts-key-env", "MY KEY"},
+	} {
+		configure(file)
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		tts := ttsFlags(fs)
+		if err := fs.Parse(bad); err != nil {
+			t.Fatal(err)
+		}
+		if err := overrideTTS(*tts); err == nil {
+			t.Errorf("%v passed", bad)
+		}
 	}
 }
 

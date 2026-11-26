@@ -99,6 +99,9 @@ demo code --tree --depth 2 desk      # a file tree, numbered for focus
 ```
 
 Speech: `demo say "a line"` plays it (`--voice NAME` to try one).
+One video in another voice, when the user asks for it: `demo build
+--voice NAME` (each config `tts` key is a flag, for that run:
+`demo build -h`). The script's own `voice` fields still win.
 Voices: `demo voices` lists the names Gemini takes, with their style;
 the default is Umbriel. Another engine (`demo config tts.model`, not
 Gemini) takes its own names. A second speaker or a quote: a scene's

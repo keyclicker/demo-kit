@@ -138,6 +138,20 @@ voice = "am_michael"
 instructions = ""
 ```
 
+One run in another voice, the config left alone: `demo build` and
+`demo say` take every `[tts]` key as a flag (`-h` lists them). A
+script's own `voice` still wins over them.
+
+```sh
+demo build --voice af_heart demo.json
+
+# another engine: say which, and its voice
+demo build --tts-url https://openrouter.ai/api/v1 \
+  --tts-key-env OPENROUTER_API_KEY \
+  --model google/gemini-3.8-flash-tts --voice Umbriel --tempo 1.2 \
+  demo.json
+```
+
 Secrets never go in the config: they come from the environment, or from
 `~/.config/demo-kit/.env` beside it (`KEY=VALUE` lines, `chmod 600`;
 the environment wins).
