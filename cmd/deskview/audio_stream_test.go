@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/keyclicker/demo-kit/internal/config"
 )
 
 // fakeSource yields endless zero chunks and counts open captures.
@@ -88,4 +93,25 @@ func TestCaptureEndClosesListeners(t *testing.T) {
 	}
 
 	b.Unsubscribe(ch) // must not double-close
+}
+
+// deskview.audio = false closes the stream too, not just api/audio:
+// nothing is captured
+func TestStreamObeysAudioOff(t *testing.T) {
+	defer func(c config.Config) { cfg = c }(cfg)
+	cfg.Deskview.Audio = false
+
+	var open atomic.Int32
+	rec := httptest.NewRecorder()
+	streamHandler(NewBroadcaster(fakeSource(&open))).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/audio/stream", nil))
+
+	if rec.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(rec.Body.String(), "deskview.audio") {
+		t.Errorf("stream: %d %q; want 503 naming deskview.audio", rec.Code,
+			rec.Body.String())
+	}
+	if open.Load() != 0 {
+		t.Error("captured with sound off")
+	}
 }

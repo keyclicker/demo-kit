@@ -214,8 +214,10 @@ as the proxy strips the prefix and both forms arrive as `/`.
   (desk displays through their `desk-N` sink's loopback)
 - Page side: an AudioWorklet keeps ~80 ms buffered, skips back when
   lag passes 250 ms, reconnects every 1 s. X bells (`RFB`'s `bell`)
-  beep through it: only with 🔊 on. No PipeWire or `deskview.audio = false`: `api/audio` says why,
-  and 🔊 stays, disabled, with that as its tooltip. A browser on the
+  beep through it: only with 🔊 on. No PipeWire or `deskview.audio =
+  false` (`audioCheck`): `api/audio` says why, `audio/stream` is a 503
+  without a capture, and 🔊 stays, disabled, with that as its tooltip.
+  A browser on the
   same machine plays the stream into the default output again: a loop
 - Headless boxes: `examples/pipewire-null-sink.conf`, a virtual
   default output, so nothing plays out loud
