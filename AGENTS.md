@@ -275,8 +275,9 @@ change to the tool and the skill by that.
     cut. Trims of 0.1 s+ are printed
   - Dead air: the built video, previews too, is scanned once more
     (`mpdecimate` + silencedetect, ~1 s per minute); still and silent
-    1.5 s+ warns with its times and scene (`warnDeadAir`). Not cut:
-    what's left is a `secs` or a bug, and a cut would hide it
+    1.5 s+ warns with its times and scene (`warnDeadAir`; `sceneAt`
+    counts whole frames, as scene lengths are). Not cut: what's left
+    is a `secs` or a bug, and a cut would hide it
   - Slides past 40% of the video warn (`slideShare`): demos show the
     real thing; slides are accents
   - Zoom (`zoom.go`): a step's `zoom` [x, y, w, h] (a clip's pixels

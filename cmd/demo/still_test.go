@@ -130,3 +130,18 @@ func TestTrimCutAudioEndsFirst(t *testing.T) {
 		}
 	}
 }
+
+// A scene's first frame is its own, though float sums of lengths land
+// a hair past showinfo's 6-decimal time
+func TestSceneAt(t *testing.T) {
+	b := &builder{script: &Script{Scenes: []Scene{{num: 1}, {num: 2},
+		{num: 3}}}, timings: []timing{{Length: 0.1 + 0.2},
+		{Length: 0.7}, {Length: 1}}}
+
+	for at, want := range map[float64]int{0: 1, 0.266667: 1, 0.3: 2,
+		0.299999: 2, 0.966667: 2, 1.0: 3, 5: 3} {
+		if got := b.sceneAt(at).num; got != want {
+			t.Errorf("sceneAt(%g) = scene %d; want %d", at, got, want)
+		}
+	}
+}

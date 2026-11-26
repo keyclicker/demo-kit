@@ -188,11 +188,14 @@ func (b *builder) warnDeadAir(ctx context.Context, w io.Writer,
 	return nil
 }
 
-// sceneAt is the scene playing at t in the video.
+// sceneAt is the scene playing at t in the video. Counted in whole
+// frames, as scenes are long (sceneTiming): a float sum of lengths
+// against showinfo's rounded times blames a scene's first frame on
+// the one before.
 func (b *builder) sceneAt(t float64) Scene {
-	at, i := 0.0, 0
-	for i < len(b.timings)-1 && at+b.timings[i].Length <= t {
-		at += b.timings[i].Length
+	frame, at, i := frameCount(t), 0, 0
+	for i < len(b.timings)-1 && at+frameCount(b.timings[i].Length) <= frame {
+		at += frameCount(b.timings[i].Length)
 		i++
 	}
 	return b.script.Scenes[i]
