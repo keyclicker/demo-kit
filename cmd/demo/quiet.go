@@ -82,8 +82,17 @@ func quietCuts(ctx context.Context, s Scene) (from, to float64,
 // cutAt moves a cut at t into a pause of ps: an end finishes its phrase
 // (the next pause) or else stops before it (the last one); a start
 // begins its phrase, or else the next. ok is false when no pause is
-// within quietWindow; t is kept then.
+// within quietWindow; t is kept then. The landing is bound as the
+// reach is, plus quietPad: anywhere in a pause is a quiet cut, and a
+// long pause's far edge would drop the picture between.
 func cutAt(ps []span, t float64, end bool) (at float64, ok bool) {
+	at, ok = pauseCut(ps, t, end)
+	reach := quietWindow + quietPad
+	return min(max(at, t-reach), t+reach), ok
+}
+
+// pauseCut is cutAt's landing before the quietWindow bound.
+func pauseCut(ps []span, t float64, end bool) (at float64, ok bool) {
 	var prev, next *span
 	for i := range ps {
 		p := &ps[i]

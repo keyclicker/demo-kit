@@ -258,8 +258,10 @@ change to the tool and the skill by that.
     inside speech move to the nearest pause (silencedetect, -35 dB,
     0.25 s+) within 3 s, an end finishing its phrase first, a start
     beginning it; a file whose last 0.1 s is loud (cut mid-speech) is
-    cut back to its last pause. Moves and misses are printed; moves
-    that cross keep the script's own cuts
+    cut back to its last pause. A move lands 3.25 s away at most (reach
+    plus 0.25 s into the pause), still in it: a long pause's far edge
+    would drop the picture between. Moves and misses are printed;
+    moves that cross keep the script's own cuts
   - The audio stream's own end counts, not the file's (`listen`): a
     recording's sound stops a few frames before its picture. Past it
     is quiet, unless the sound ends loud; "last 0.1 s" is the audio's

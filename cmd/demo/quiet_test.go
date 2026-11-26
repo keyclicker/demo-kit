@@ -66,6 +66,27 @@ func TestCutAt(t *testing.T) {
 				at, ok, c.at, c.ok)
 		}
 	}
+
+	// A pause at 10-40: a move goes 3.25 s at most, still into it
+	ps = []span{{10, 40}}
+	cases = []struct {
+		t   float64
+		end bool
+		at  float64
+		ok  bool
+	}{
+		{40.5, true, 37.25, true}, // not back to 10.25
+		{9.5, false, 12.75, true}, // not on to 39.75
+		{9.5, true, 10.25, true},  // near edge: as before
+		{41, false, 39.75, true},
+	}
+	for _, c := range cases {
+		at, ok := cutAt(ps, c.t, c.end)
+		if at != c.at || ok != c.ok {
+			t.Errorf("cutAt(%g, end %v) = %g %v, want %g %v", c.t, c.end,
+				at, ok, c.at, c.ok)
+		}
+	}
 }
 
 func TestSlideShare(t *testing.T) {
