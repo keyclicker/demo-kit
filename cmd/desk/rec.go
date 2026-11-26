@@ -126,7 +126,8 @@ func parseRecDisplay(s string) (int, error) {
 }
 
 // printRecording reports a finished video: path, and its tailnet URL;
-// or, when the join failed, the parts left behind.
+// or, when the join failed, the parts left behind. video exists only
+// once joined whole (joinSegments).
 func printRecording(n int, video string) {
 	if !exists(video) {
 		parts, _ := filepath.Glob(strings.TrimSuffix(video, ".mp4") +
@@ -467,13 +468,11 @@ func cmdRecRun(args []string) error {
 
 	state := Recording{Video: *video, Owner: owner}
 	if err := writeRec(n, state); err != nil {
-		r.finish()
-		return err
+		return errors.Join(err, r.finish())
 	}
 
 	if err := notify("READY=1"); err != nil {
-		r.finish()
-		return err
+		return errors.Join(err, r.finish())
 	}
 
 	ownerGone := make(chan struct{})
@@ -501,8 +500,8 @@ func cmdRecRun(args []string) error {
 			// The display went away, or ffmpeg crashed
 			log.Printf("ffmpeg exited on its own, saving")
 			r.current = nil
-			r.finish()
-			return errors.New("ffmpeg exited mid-recording")
+			return errors.Join(errors.New("ffmpeg exited mid-recording"),
+				r.finish())
 		}
 
 		state.Paused = r.current == nil

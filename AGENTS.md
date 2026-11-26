@@ -104,6 +104,12 @@ the finished videos: path, plus a link when `publish.url` is set);
     stops `desk-rec-N` itself before Xvnc
   - Never overwrites: `start` refuses an existing video or `part1`;
     `stop`/`rm` print "not saved" plus the kept parts if the join failed
+  - Join (`joinSegments`), all or nothing: every part's packets read
+    first (`checkVideo`; the concat demuxer skips a broken part and
+    exits 0, and a probe passes one cut short after `+faststart`),
+    `-xerror`, into a hidden `.NAME.joining` renamed on success. So the
+    video existing means it's whole; parts go only after. A segment
+    ffmpeg won't finalize in 20 s is killed, logged
   - State: `stateDir/.rec-N` (owner, video, `recording|paused`),
     written by the recorder only; stops when its owner exits
   - `pause`/`resume`/`stop` need the recording's owner, or `--force`
