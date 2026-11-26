@@ -168,7 +168,9 @@ as the proxy strips the prefix and both forms arrive as `/`.
   Agent tabs: disabled
 - `/vnc/{token}`: WebSocket ↔ VNC TCP (`coder/websocket` `NetConn`),
   only to displays `desk ls` lists, same origin only (`Origin` host =
-  `Host` or `X-Forwarded-Host`), subprotocol `binary`
+  `Host` or a set `X-Forwarded-Host`, exactly; a hostless `Origin`,
+  `null` or `file://`, is refused; none is not a browser), subprotocol
+  `binary`
 - Sound: VNC carries none. `/audio/stream` = raw s16le 48 kHz stereo
   (format in `X-Audio-*` headers), ~1.5 Mbit/s per listener. One
   `pw-record` of `deskview.audio_sink`'s monitor (default: the default
