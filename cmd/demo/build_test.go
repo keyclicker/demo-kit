@@ -221,7 +221,7 @@ func TestSilentClipLength(t *testing.T) {
 }
 
 // Decimating keeps a moving clip's real speed at any frame rate, and
-// shrinks an idle stretch to idleGap.
+// shrinks an idle stretch to one frame.
 func TestDecimateFilter(t *testing.T) {
 	noise := "color=c=gray:s=64x48:r=%d:d=%g,noise=alls=100:allf=t"
 	for _, tc := range []struct {
@@ -233,13 +233,18 @@ func TestDecimateFilter(t *testing.T) {
 		{"30 fps", fmt.Sprintf(noise, 30, 2.0), 2},
 		{"60 fps", fmt.Sprintf(noise, 60, 2.0), 2},
 		{"idle 3 s", fmt.Sprintf(noise, 30, 1.0) +
-			",tpad=stop_mode=clone:stop_duration=3", 1 + idleGap},
+			",tpad=stop_mode=clone:stop_duration=3", 1 + 1.0/fps},
 	} {
 		clip := lavfiClip(t, tc.source)
 		out := filepath.Join(t.TempDir(), "busy.mp4")
 
-		err := ffmpeg(context.Background(), "", nil, "-i", clip, "-vf",
-			decimateFilter(), "-c:v", "libx264", out)
+		rate, err := probeRate(context.Background(), clip)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = ffmpeg(context.Background(), "", nil, "-i", clip, "-vf",
+			decimateFilter(rate), "-c:v", "libx264", out)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -259,8 +259,9 @@ change to the tool and the skill by that.
     and video stay in step. Steps mix in at their starts (`amix`)
   - Clips: cut first (`cutClips`, before timing), then `mpdecimate`
     drops idle frames (`decimate: false` keeps them; `decimateFilter`:
-    each change after its real gap, idle ones shrunk to 0.1 s, so 10
-    or 60 fps play at their speed; no frame rate assumed), then `setpts`
+    each change after its real gap, capped at one frame of the clip's
+    own rate (`probeRate`), so 10 or 60 fps play at their speed and an
+    idle stretch shrinks to a frame), then `setpts`
     speeds up to fit (`speedFor`, warns past 6x) or `tpad` holds the
     last frame. With nothing said a clip keeps every frame and lasts
     its (trimmed) cut (no `secs` to probe for). `audio: true` keeps its sound (and
