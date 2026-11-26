@@ -50,14 +50,18 @@ func recPath(n int) string {
 }
 
 // readRec returns display n's live recording, or nil. State left by a
-// dead unit is stale: remove it.
+// dead unit is stale: remove it. When systemd can't be asked, the
+// state file's word stands.
 func readRec(n int) *Recording {
 	data, err := os.ReadFile(recPath(n))
 	if err != nil {
 		return nil
 	}
 
-	if !unitAlive(recUnitName(n)) {
+	switch alive, err := unitAlive(recUnitName(n)); {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "desk: :%d recording: %v (kept)\n", n, err)
+	case !alive:
 		os.Remove(recPath(n))
 		return nil
 	}
@@ -266,7 +270,9 @@ func checkRecordable(n int, me Owner, force bool) error {
 // first frames are encoded. Callers hold the state lock.
 func startRec(n int, owner Owner, video string) error {
 	unit := recUnitName(n)
-	if unitAlive(unit) {
+	if alive, err := unitAlive(unit); err != nil {
+		return err
+	} else if alive {
 		return fmt.Errorf(":%d is already recording (desk rec stop :%d)",
 			n, n)
 	}

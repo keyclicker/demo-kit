@@ -55,6 +55,10 @@ the finished videos: path, plus a link when `publish.url` is set);
   them once their unit is gone. The host display has no file: `desk
   ls` adds `desk.host_display` while its X socket exists, with
   `desk.host_vnc` as its `vnc`
+  - `unitAlive` returns an error when `systemctl show` fails (bus
+    timeout, manager re-exec): never "dead". Tokens and `.rec-N` then
+    stay, with a warning; deskview's `desk ls` every 3 s would
+    otherwise wipe every live desktop on one hiccup
 - Ownership: the owner is the first non-shell ancestor of `desk new`
   (an agent's tool calls are short-lived shells, so: `claude`,
   `codex`), or `$DESK_OWNER_PID`. Identified by PID + start time

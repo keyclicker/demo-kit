@@ -75,17 +75,22 @@ func parseDisplay(s string) (int, error) {
 	return n, nil
 }
 
-// unitAlive reports whether a user unit is starting or running.
-func unitAlive(unit string) bool {
-	out, _ := exec.Command("systemctl", "--user", "show",
+// unitAlive reports whether a user unit is starting or running. An
+// error means systemd couldn't be asked (bus timeout, manager
+// re-exec): never take it for a dead unit and drop its state.
+func unitAlive(unit string) (bool, error) {
+	out, err := exec.Command("systemctl", "--user", "show",
 		"--property=ActiveState", "--value", unit).Output()
+	if err != nil {
+		return false, fmt.Errorf("systemctl show %s: %w", unit, err)
+	}
 
 	switch strings.TrimSpace(string(out)) {
 	case "active", "activating", "reloading":
-		return true
+		return true, nil
 	}
 
-	return false
+	return false, nil
 }
 
 // ---- Commands ----
@@ -314,7 +319,8 @@ func cmdRemove(args []string) error {
 
 // list returns the host display (when it's up) and every desk display
 // in stateDir, sorted by display. It drops desk entries whose unit is
-// gone: a crashed unit leaves its token.
+// gone: a crashed unit leaves its token. One systemd can't be asked
+// about stays, with a warning.
 func list() ([]Desktop, error) {
 	entries, err := os.ReadDir(stateDir)
 	if err != nil {
@@ -351,7 +357,15 @@ func list() ([]Desktop, error) {
 		}
 
 		n, err := parseDisplay(token)
-		if err != nil || !unitAlive(unitName(n)) {
+		if err != nil {
+			os.Remove(path)
+			continue
+		}
+
+		switch alive, err := unitAlive(unitName(n)); {
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "desk: :%d: %v (kept)\n", n, err)
+		case !alive:
 			os.Remove(path)
 			continue
 		}
@@ -412,10 +426,10 @@ func unitEnv() []string {
 // freeDisplay returns the lowest display number nothing else holds.
 func freeDisplay() (int, error) {
 	for n := firstDisplay; n <= lastDisplay; n++ {
-		taken := exists(fmt.Sprintf("/tmp/.X11-unix/X%d", n)) ||
-			exists(fmt.Sprintf("/tmp/.X%d-lock", n)) ||
-			exists(tokenPath(n)) ||
-			unitAlive(unitName(n)) || unitAlive(recUnitName(n))
+		taken, err := displayTaken(n)
+		if err != nil {
+			return 0, err
+		}
 
 		if !taken {
 			return n, nil
@@ -424,6 +438,24 @@ func freeDisplay() (int, error) {
 
 	return 0, fmt.Errorf("no free display in :%d-:%d", firstDisplay,
 		lastDisplay)
+}
+
+// displayTaken reports whether anything holds display n: an X server,
+// desk's registry, or a desk unit.
+func displayTaken(n int) (bool, error) {
+	if exists(fmt.Sprintf("/tmp/.X11-unix/X%d", n)) ||
+		exists(fmt.Sprintf("/tmp/.X%d-lock", n)) ||
+		exists(tokenPath(n)) {
+		return true, nil
+	}
+
+	for _, unit := range []string{unitName(n), recUnitName(n)} {
+		if alive, err := unitAlive(unit); err != nil || alive {
+			return alive, err
+		}
+	}
+
+	return false, nil
 }
 
 // lockState takes the exclusive allocation lock in stateDir.

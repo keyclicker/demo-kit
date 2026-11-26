@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -56,5 +58,64 @@ func TestSize(t *testing.T) {
 		if sizeRE.MatchString(bad) {
 			t.Errorf("accepted %q", bad)
 		}
+	}
+}
+
+// stubCommand puts an executable shell script named name first on PATH.
+func stubCommand(t *testing.T, name, script string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	body := "#!/bin/sh\n" + script + "\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body),
+		0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// A failed `systemctl show` says nothing about the unit: list must keep
+// the display and its recording; an answer of "inactive" drops both.
+func TestListKeepsStateWhenSystemdFails(t *testing.T) {
+	stateDir = t.TempDir()
+	owner := Owner{PID: 42, Start: 7, Name: "claude"}
+	rec := Recording{Video: "/r/a.mp4", Owner: owner}
+
+	register := func() {
+		if err := writeToken(21, owner); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeRec(21, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// ---- systemd unreachable ----
+
+	register()
+	stubCommand(t, "systemctl", "exit 1")
+
+	desks, err := list()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(desks) != 1 || desks[0].Display != ":21" ||
+		desks[0].Recording == nil || *desks[0].Recording != rec {
+		t.Fatalf("list() = %+v; want :21, recording", desks)
+	}
+	if !exists(tokenPath(21)) || !exists(recPath(21)) {
+		t.Fatal("state removed after a failed query")
+	}
+
+	// ---- units gone ----
+
+	stubCommand(t, "systemctl", "echo inactive")
+
+	if desks, err = list(); err != nil || len(desks) != 0 {
+		t.Fatalf("list() = %+v, %v; want none", desks, err)
+	}
+	if readRec(21) != nil || exists(tokenPath(21)) || exists(recPath(21)) {
+		t.Fatal("stale state kept")
 	}
 }

@@ -184,8 +184,14 @@ func cmdRun(args []string) error {
 		log.Printf("owner %s exited, closing", owner)
 
 		// The recording first: After= orders only stop jobs, and this
-		// exit isn't one. Blocks until its video is joined.
-		if unitAlive(recUnitName(n)) {
+		// exit isn't one. Blocks until its video is joined. Unsure if
+		// it runs: stop it anyway, a lost video is worse than a log.
+		alive, err := unitAlive(recUnitName(n))
+		if err != nil {
+			log.Print(err)
+		}
+
+		if alive || err != nil {
 			rec := exec.Command("systemctl", "--user", "stop",
 				recUnitName(n))
 			if err := rec.Run(); err != nil {
