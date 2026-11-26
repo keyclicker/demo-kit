@@ -78,45 +78,101 @@
         background: #3a3a3a;
       }
 
-      iframe {
+      /* One per desktop; RFB draws its canvas inside, scaled to fit */
+      .screen {
+        position: relative;
         flex: 1;
-        width: 100%;
-        border: 0;
+        min-height: 0;
       }
 
-      iframe[hidden] {
+      .screen[hidden] {
         display: none;
+      }
+
+      /* Not connected (yet): say so over the last picture */
+      .screen[data-status]::after {
+        content: attr(data-status);
+        position: absolute;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 4px 14px;
+        color: #999999;
+        background: #242424;
+        border-radius: 6px;
       }
     </style>
   </head>
   <body>
-    <!-- One live noVNC per desktop, listed by deskview's api/desktops
-         (`desk ls --json`) and re-polled, so agent desktops come and go
-         as tabs. Tabs only toggle which one shows, so switching never
-         reconnects. The host display opens interactive; desk's agent
-         desktops are view-only (their Xvnc ignores VNC input too).
-         `view_only` is explicit, so noVNC's saved toggle never leaks
-         across them. Every URL is relative: deskview may sit under a
-         path prefix. -->
+    <!-- One live VNC screen per desktop (noVNC's RFB client), listed by
+         deskview's api/desktops (`desk ls --json`) and re-polled, so
+         agent desktops come and go as tabs. Tabs only toggle which one
+         shows, so switching never reconnects. The host display opens
+         interactive; desk's agent desktops are view-only (their Xvnc
+         ignores VNC input too). Every URL is relative: deskview may sit
+         under a path prefix. -->
     <nav>
       <button class="end" id="control" aria-pressed="false">🖱 control</button>
       <button id="sound" aria-pressed="false" disabled
               title="checking for sound…">🔇 sound</button>
     </nav>
 
-    <script>
+    <script type="module">
+      import RFB from "./novnc/core/rfb.js";
+
       const nav = document.querySelector("nav");
-      // token → { tab, frame }, in display order
+      // token → { token, display, tab, screen, rfb, retry, stopped,
+      // viewOnly, control }, in display order
       const desks = new Map();
 
-      function vncURL(desk) {
-        // noVNC resolves path against vnc.html: novnc/../vnc/N
-        const path = encodeURIComponent(`../vnc/${desk.token}`);
-        return "novnc/vnc.html?autoconnect=true&reconnect=true" +
-          `&resize=scale&view_only=${desk.viewOnly}&path=${path}`;
+      // ---- connections ------------------------------------------------
+
+      // ws(s)://…/vnc/N, against the page: deskview may sit under a prefix
+      function vncURL(token) {
+        const url = new URL(`vnc/${token}`, location.href);
+        url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        return url.href;
       }
 
-      // Add a tab and a live noVNC frame for a new desktop.
+      // Connect an entry's screen; dropped, try again in 2 s while it's
+      // still listed. An RFB is one connection: each try is a new one.
+      function connect(entry) {
+        const rfb = new RFB(entry.screen, vncURL(entry.token), {
+          wsProtocols: ["binary"],
+        });
+        rfb.scaleViewport = true;
+        rfb.background = "#1a1a1a";
+        rfb.viewOnly = !entry.control;
+        entry.rfb = rfb;
+
+        rfb.addEventListener("connect", () => {
+          delete entry.screen.dataset.status;
+        });
+
+        rfb.addEventListener("disconnect", () => {
+          entry.rfb = null;
+          if (desks.get(entry.token) !== entry || entry.stopped) return;
+          entry.screen.dataset.status = "reconnecting…";
+          entry.retry = setTimeout(() => connect(entry), 2000);
+        });
+
+        // A host VNC may have a password; desk's own never do. Cancel
+        // stops trying until the page reloads.
+        rfb.addEventListener("credentialsrequired", () => {
+          const password = prompt(`VNC password for ${entry.display}:`);
+          if (password !== null) return rfb.sendCredentials({ password });
+
+          entry.stopped = true;
+          entry.screen.dataset.status = "no password";
+          rfb.disconnect();
+        });
+
+        rfb.addEventListener("bell", bell);
+      }
+
+      // ---- tabs -------------------------------------------------------
+
+      // Add a tab and a live screen for a new desktop.
       function add(desk) {
         const tab = document.createElement("a");
         tab.href = "#" + desk.token;
@@ -124,23 +180,36 @@
           ? `Agent · ${desk.display}`
           : `Host · ${desk.display}`;
 
-        const frame = document.createElement("iframe");
-        frame.title = `Desktop ${desk.display}`;
-        frame.src = vncURL(desk);
-        frame.hidden = true;
+        const screen = document.createElement("div");
+        screen.className = "screen";
+        screen.title = `Desktop ${desk.display}`;
+        screen.dataset.status = "connecting…";
+        screen.hidden = true;
 
         // Keep tabs sorted by display number
         const next = [...desks.keys()].find((t) => Number(t) > Number(desk.token));
         nav.insertBefore(tab, next ? desks.get(next).tab : controlButton);
-        document.body.append(frame);
+        document.body.append(screen);
 
         // The host display takes input by default; agent desktops ignore it
-        const entry = { tab, frame, viewOnly: desk.viewOnly, control: !desk.viewOnly };
-        frame.addEventListener("load", () => {
-          applyControl(entry);
-          applyBell(entry);
-        });
+        const entry = {
+          token: desk.token, display: desk.display, tab, screen,
+          rfb: null, retry: null, stopped: false,
+          viewOnly: desk.viewOnly, control: !desk.viewOnly,
+        };
         desks.set(desk.token, entry);
+        connect(entry);
+      }
+
+      // Drop a desktop that's gone: its tab, screen and connection.
+      function remove(token) {
+        const entry = desks.get(token);
+        desks.delete(token); // first: its disconnect then won't retry
+
+        clearTimeout(entry.retry);
+        entry.rfb?.disconnect();
+        entry.tab.remove();
+        entry.screen.remove();
       }
 
       // Owner on hover: an agent desktop's creator, or the agent that
@@ -158,11 +227,9 @@
         const live = new Set(list.map((d) => d.token));
         let changed = false;
 
-        for (const [token, { tab, frame }] of desks) {
+        for (const token of [...desks.keys()]) {
           if (!live.has(token)) {
-            tab.remove();
-            frame.remove();
-            desks.delete(token);
+            remove(token);
             changed = true;
           }
         }
@@ -190,8 +257,8 @@
         const wanted = location.hash.slice(1);
         const name = desks.has(wanted) ? wanted : desks.keys().next().value;
 
-        for (const [token, { tab, frame }] of desks) {
-          frame.hidden = token !== name;
+        for (const [token, { tab, screen }] of desks) {
+          screen.hidden = token !== name;
           if (token === name) {
             current = token;
             tab.setAttribute("aria-current", "true");
@@ -199,26 +266,16 @@
             tab.removeAttribute("aria-current");
           }
         }
-        desks.get(name).frame.focus();
+        desks.get(name).rfb?.focus();
         renderControl();
       }
 
       // ---- control (view-only) toggle ---------------------------------
-      // noVNC's own toggle hides in its sidebar. Frames share our origin,
-      // so flip its checkbox directly: live, no reconnect. Agent desktops'
-      // Xvnc ignores VNC input (-Accept*=0), so their toggle stays off.
+      // RFB's viewOnly, live: no reconnect. Agent desktops' Xvnc ignores
+      // VNC input (-Accept*=0), so their toggle stays off.
 
       const controlButton = document.getElementById("control");
       let current = null; // token of the shown desktop
-
-      // Push an entry's control state into its noVNC frame.
-      function applyControl(entry) {
-        const box = entry.frame.contentDocument?.getElementById("noVNC_setting_view_only");
-        if (!box || box.checked === !entry.control) return;
-
-        box.checked = !entry.control;
-        box.dispatchEvent(new Event("change"));
-      }
 
       function renderControl() {
         const entry = desks.get(current);
@@ -235,9 +292,11 @@
       controlButton.addEventListener("click", () => {
         const entry = desks.get(current);
         entry.control = !entry.control;
-        applyControl(entry);
+        if (entry.rfb) {
+          entry.rfb.viewOnly = !entry.control;
+          entry.rfb.focus();
+        }
         renderControl();
-        entry.frame.focus();
       });
 
       async function poll() {
@@ -357,18 +416,23 @@
         sound = null;
       }
 
-      // noVNC rings X bells with its own <audio> (same origin): beep only
-      // while 🔊 is on, like the rest of the page's sound.
-      function applyBell(entry) {
-        const bell = entry.frame.contentDocument?.getElementById("noVNC_bell");
-        if (bell) bell.muted = !sound;
+      // An X bell: a short beep, only while 🔊 is on, like the rest of
+      // the page's sound.
+      function bell() {
+        if (!sound) return;
+
+        const { ctx } = sound;
+        const tone = new OscillatorNode(ctx, { frequency: 880 });
+        const gain = new GainNode(ctx, { gain: 0.15 });
+        tone.connect(gain).connect(ctx.destination);
+        tone.start();
+        tone.stop(ctx.currentTime + 0.12);
       }
 
       // Browsers only start audio from a click, so sound is never on at load
       soundButton.addEventListener("click", async () => {
         if (sound) stopSound();
         else await startSound();
-        for (const entry of desks.values()) applyBell(entry);
 
         soundButton.setAttribute("aria-pressed", String(!!sound));
         soundButton.textContent = sound ? "🔊 sound" : "🔇 sound";
