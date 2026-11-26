@@ -154,14 +154,18 @@ relative, so it works under a path prefix (`tailscale serve
 as the proxy strips the prefix and both forms arrive as `/`.
 
 - Page (`web/index.html`): polls `api/desktops` every 3 s: one tab and
-  live noVNC iframe per display with a `vnc` address. Tabs only toggle
+  live screen per display with a `vnc` address, each noVNC's `RFB`
+  (`scaleViewport`), reconnected 2 s after a drop. Tabs only toggle
   visibility, so switching never reconnects. The host display opens
-  interactive; desk displays `view_only=true`
-- noVNC 1.6.0, vendored in `web/novnc`, embedded. It resolves `path`
-  against `vnc.html`, so the page passes `../vnc/N`
-- 🖱 control / 👁 view only: flips the shown frame's noVNC
-  `noVNC_setting_view_only` checkbox (same origin), live. Agent tabs:
-  disabled
+  interactive; desk displays view-only. A host VNC's password is
+  `prompt`ed
+- noVNC's client only: `core/` and `vendor/` (pako) in `web/novnc`,
+  embedded; version in its `VERSION`. Its UI (`app/`, `vnc.html`)
+  stays out: it hid our settings in its sidebar, and its 1.7.0 asks
+  before closing an interactive tab. Update: `scripts/update-novnc.sh
+  VERSION`; `TestImportsResolve` checks every import is embedded
+- 🖱 control / 👁 view only: the shown screen's `rfb.viewOnly`, live.
+  Agent tabs: disabled
 - `/vnc/{token}`: WebSocket ↔ VNC TCP (`coder/websocket` `NetConn`),
   only to displays `desk ls` lists, same origin only (`Origin` host =
   `Host` or `X-Forwarded-Host`), subprotocol `binary`
@@ -172,8 +176,8 @@ as the proxy strips the prefix and both forms arrive as `/`.
   chunks. One stream per login session: every display plays into it
   (desk displays through their `desk-N` sink's loopback)
 - Page side: an AudioWorklet keeps ~80 ms buffered, skips back when
-  lag passes 250 ms, reconnects every 1 s. 🔊 also unmutes noVNC's
-  bell. No PipeWire or `deskview.audio = false`: `api/audio` says why,
+  lag passes 250 ms, reconnects every 1 s. X bells (`RFB`'s `bell`)
+  beep through it: only with 🔊 on. No PipeWire or `deskview.audio = false`: `api/audio` says why,
   and 🔊 stays, disabled, with that as its tooltip. A browser on the
   same machine plays the stream into the default output again: a loop
 - Headless boxes: `examples/pipewire-null-sink.conf`, a virtual

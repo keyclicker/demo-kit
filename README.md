@@ -203,7 +203,7 @@ directory yourself.
 
 ## License
 
-[AGPL-3.0-only](LICENSE). Bundled: noVNC 1.6.0 (MPL-2.0,
+[AGPL-3.0-only](LICENSE). Bundled: noVNC's client and pako (MPL-2.0, MIT;
 `cmd/deskview/web/novnc`), JetBrains Mono (OFL, `cmd/demo/fonts`).
 
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
