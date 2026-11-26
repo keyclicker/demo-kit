@@ -391,7 +391,7 @@ func (c *Config) resolve() error {
 		return fmt.Errorf("deskview.addr: %q: want host:port", c.Deskview.Addr)
 	}
 
-	if err := c.TTS.check(); err != nil {
+	if err := c.TTS.Check(); err != nil {
 		return err
 	}
 
@@ -406,8 +406,9 @@ func (c *Config) resolve() error {
 	return nil
 }
 
-// check validates the speech engine's keys.
-func (t TTS) check() error {
+// Check validates the speech engine's keys: the file's, and a command's
+// own once its flags override them.
+func (t TTS) Check() error {
 	u, err := url.Parse(t.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") ||
 		u.Host == "" {

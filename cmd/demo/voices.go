@@ -78,7 +78,8 @@ func cmdVoices(args []string) error {
 	}
 	fmt.Println("\nOther models take their own names (Kokoro am_michael," +
 		" Grok Rex, ElevenLabs Liam).\nPick one in a script's or" +
-		` scene's voice: {"name": "Charon"}, or tts.voice in the` +
-		" config for all; try it: demo say --voice NAME")
+		` scene's voice: {"name": "Charon"}, tts.voice in the` +
+		" config for all, or one run's flag: demo build --voice NAME," +
+		" demo say --voice NAME")
 	return nil
 }

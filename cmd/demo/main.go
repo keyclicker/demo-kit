@@ -33,7 +33,9 @@ const usageText = `demo: narrated demo and explainer videos, and speech
 
 Recordings come from desk (desk new records; desk rec for more).
 Script format and workflow: the demo skill. Each command: -h.
-Speech: config [tts], its key from $<tts.key_env>. Config: demo config -h.
+Speech: config [tts], its key from $<tts.key_env>; build and say take
+each tts key as a flag, for one run (--voice, --model, --tts-url, ...).
+Config: demo config -h.
 `
 
 func main() {
