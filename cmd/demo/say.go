@@ -381,10 +381,10 @@ func writeReceipt(wav string, r receipt) error {
 var priceWait = 30 * time.Second
 
 // price is what wav cost when made, from its receipt, looked up (and
-// written into the receipt) the first time; false when unknown. The
-// receipt is e's: wavs are cached per engine.
-func price(ctx context.Context, e ttsEngine,
-	wav string) (float64, bool, error) {
+// written into the receipt) the first time, polling for up to wait;
+// false when unknown. The receipt is e's: wavs are cached per engine.
+func price(ctx context.Context, e ttsEngine, wav string,
+	wait time.Duration) (float64, bool, error) {
 
 	r, ok, err := readReceipt(wav)
 	switch {
@@ -400,7 +400,7 @@ func price(ctx context.Context, e ttsEngine,
 	if !ok {
 		return 0, false, nil
 	}
-	usd, ok, err := pricer.price(ctx, r.GenID, priceWait)
+	usd, ok, err := pricer.price(ctx, r.GenID, wait)
 	if err != nil || !ok {
 		return 0, false, err
 	}
@@ -428,8 +428,11 @@ func (b speechBill) String() string {
 	return s
 }
 
-// billOf prices lines in parallel. A failed lookup warns and leaves its
-// line unpriced: the bill still prints.
+// billOf prices lines in parallel. A line made in this run polls for
+// its price (priceWait), and a failed lookup warns; a cached one asks
+// once, quietly: one that never priced (another account's key, an
+// expired generation) would cost every build 30 s and a warning. Both
+// leave the line unpriced: the bill still prints.
 func billOf(ctx context.Context, e ttsEngine, lines []spoken) speechBill {
 	fresh := map[string]bool{}
 	for _, sp := range lines {
@@ -442,11 +445,15 @@ func billOf(ctx context.Context, e ttsEngine, lines []spoken) speechBill {
 
 	for wav, isNew := range fresh {
 		wg.Go(func() {
-			usd, ok, err := price(ctx, e, wav)
+			wait := time.Duration(0)
+			if isNew {
+				wait = priceWait
+			}
+			usd, ok, err := price(ctx, e, wav, wait)
 
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil {
+			if err != nil && isNew {
 				fmt.Fprintf(os.Stderr, "demo: tts cost: %v\n", err)
 			}
 

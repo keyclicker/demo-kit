@@ -440,12 +440,14 @@ change to the tool and the skill by that.
     would draw the key into a shared video
   - Cost: OpenRouter's `GET /generation?id=<X-Generation-Id>`, only
     when a response carries that header (else unpriced); 404 until
-    priced, any other error ends it. Priced a few seconds
-    late, so it polls for up to 30 s; ~$0.0017 per 7 s line. Kept in
-    the receipt. Build and `say --cost` print new spend and the cached
+    priced, any other error ends it. Priced a few seconds late, so a
+    line made in this run polls for up to 30 s; a cached unpriced one
+    asks once, quietly (another account's key, an expired generation
+    would cost every build 30 s). ~$0.0017 per 7 s line. Kept in the
+    receipt. Build and `say --cost` print new spend and the cached
     share (`billOf`): `tts $0.0042 new (3 lines), 9 cached ($0.0150)`,
-    plus `N unpriced` (lines cached before receipts, failed lookups,
-    which warn)
+    plus `N unpriced` (lines cached before receipts, failed lookups;
+    a new line's warns)
 - Needs `ffmpeg` (libass, libx264), `ffprobe`, `git`, the DejaVu Sans
   font (captions); `pw-play` optional. After a change: `go test
   ./...`, `./install.sh --no-deps --yes --only demo`

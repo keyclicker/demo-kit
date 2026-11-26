@@ -235,7 +235,8 @@ func TestSpeakRefusesEmptyAudio(t *testing.T) {
 }
 
 // The bill counts new and cached lines apart, each distinct line once,
-// prices a receipt once, and leaves failed lookups unpriced
+// prices a receipt once, and leaves failed lookups unpriced. A cached
+// unpriced line asks once, without polling
 func TestBillOf(t *testing.T) {
 	dir := t.TempDir()
 	lookups := map[string]int{}
@@ -256,7 +257,7 @@ func TestBillOf(t *testing.T) {
 	defer srv.Close()
 	tts := testEngine(srv.URL)
 	defer func(wait time.Duration) { priceWait = wait }(priceWait)
-	priceWait = 0
+	priceWait = time.Minute
 
 	line := func(name string, r *receipt) string {
 		wav := filepath.Join(dir, name+".wav")
@@ -274,8 +275,14 @@ func TestBillOf(t *testing.T) {
 	lost := line("lost", &receipt{GenID: "gen-lost"})
 
 	ctx := context.Background()
+	start := time.Now()
 	bill := billOf(ctx, tts, []spoken{{Wav: fresh, New: true},
 		{Wav: fresh}, {Wav: priced}, {Wav: old}, {Wav: lost}})
+	if took := time.Since(start); took > 10*time.Second ||
+		lookups["gen-lost"] != 1 {
+		t.Fatalf("cached unpriced line: %s, %d lookups; want one, at once",
+			took, lookups["gen-lost"])
+	}
 
 	want := speechBill{New: 1, NewUSD: 0.002, Cached: 3, CachedUSD: 0.003,
 		Unpriced: 2}
