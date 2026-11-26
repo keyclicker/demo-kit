@@ -103,6 +103,8 @@ func TestLoadRejects(t *testing.T) {
 		"bad key_env":   "[tts]\nkey_env = \"sk-or-123\"\n",
 		"no model":      "[tts]\nmodel = \"\"\n",
 		"bad tempo":     "[tts]\ntempo = 9\n",
+		"host url":      "[deskview]\nhosts = [\"https://box\"]\n",
+		"host port":     "[deskview]\nhosts = [\"box:443\"]\n",
 	}
 
 	for name, body := range cases {
@@ -113,6 +115,17 @@ func TestLoadRejects(t *testing.T) {
 				t.Error("loaded without error")
 			}
 		})
+	}
+}
+
+// deskview.hosts takes names and IPs
+func TestLoadHosts(t *testing.T) {
+	write(t, isolate(t), "[deskview]\nhosts = [\"box.tailnet.ts.net\", "+
+		"\"100.64.0.1\", \"fd7a::1\"]\n")
+
+	c, err := Load()
+	if err != nil || len(c.Deskview.Hosts) != 3 {
+		t.Fatalf("hosts %q, %v", c.Deskview.Hosts, err)
 	}
 }
 

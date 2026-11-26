@@ -201,11 +201,17 @@ as the proxy strips the prefix and both forms arrive as `/`.
   VERSION`; `TestImportsResolve` checks every import is embedded
 - 🖱 control / 👁 view only: the shown screen's `rfb.viewOnly`, live.
   Agent tabs: disabled
+- Hosts (`hosts.go`, `knownHosts`, every route): only a Host of
+  `localhost`, `127.0.0.1`, `[::1]` (any port) or a `deskview.hosts`
+  name, else 403 naming the key: a site rebinding its name to loopback
+  is same-origin by construction. `tailscale serve` passes the incoming
+  Host on (plus it as `X-Forwarded-Host`), so its public name goes in
+  `deskview.hosts`. A request header never makes a host known
 - `/vnc/{token}`: WebSocket ↔ VNC TCP (`coder/websocket` `NetConn`),
   only to displays `desk ls` lists, same origin only (`Origin` host =
-  `Host` or a set `X-Forwarded-Host`, exactly; a hostless `Origin`,
-  `null` or `file://`, is refused; none is not a browser), subprotocol
-  `binary`
+  `Host` or a set, known `X-Forwarded-Host`, exactly; a hostless
+  `Origin`, `null` or `file://`, is refused; none is not a browser),
+  subprotocol `binary`
 - Sound: VNC carries none. `/audio/stream` = raw s16le 48 kHz stereo
   (format in `X-Audio-*` headers), ~1.5 Mbit/s per listener. One
   `pw-record` of `deskview.audio_sink`'s monitor (default: the default

@@ -121,6 +121,7 @@ tempo = 1.2                             # speed-up, pitch kept (0.5-4)
 addr = "127.0.0.1:8737"
 audio = true
 audio_sink = ""                     # "" = the default output
+hosts = []                          # names a proxy serves it under
 
 [publish]
 root = "~/.local/share/demo-kit"    # deskview serves it at /files/
@@ -170,7 +171,21 @@ tailscale serve --bg --set-path /desktops http://127.0.0.1:8737
 ```
 
 or an SSH tunnel: `ssh -L 8737:127.0.0.1:8737 host`. Every URL in the
-page is relative, so a path prefix works. Then set `publish.url` to the
+page is relative, so a path prefix works.
+
+deskview answers only requests for `localhost`, `127.0.0.1` or `[::1]`
+(any port), so a web page that rebinds its own name to your loopback
+can't read it. A proxy that passes on the public name, as `tailscale
+serve` does, needs that name in `deskview.hosts`, else every request is
+a 403 naming the setting:
+
+```toml
+[deskview]
+hosts = ["box.tailnet-name.ts.net"]
+```
+
+An SSH tunnel, or a proxy that sends `Host: 127.0.0.1:8737`, needs
+nothing. Then set `publish.url` to the
 public URL of `/files/`, and `desk` and `demo` print links to their
 videos.
 

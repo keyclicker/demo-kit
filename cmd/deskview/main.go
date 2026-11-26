@@ -11,7 +11,8 @@
 //
 // It listens on deskview.addr, loopback by default: put a tunnel or a
 // proxy with auth in front of it (tailscale serve, a reverse proxy). Every
-// URL the page uses is relative, so it works under any path prefix.
+// URL the page uses is relative, so it works under any path prefix. It
+// answers only loopback names and deskview.hosts in Host (hosts.go).
 package main
 
 import (
@@ -97,5 +98,5 @@ func serve() error {
 	}
 	log.Printf("http://%s/ (displays from %s)", cfg.Deskview.Addr, desk)
 
-	return http.ListenAndServe(cfg.Deskview.Addr, mux)
+	return http.ListenAndServe(cfg.Deskview.Addr, knownHosts(mux))
 }
