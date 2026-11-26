@@ -13,7 +13,7 @@ check command -v xfwm4
 check command -v xauth
 check command -v xsetroot
 check command -v xdotool
-check command -v scrot
+check sh -c 'command -v scrot || command -v import' # EL 9: no scrot
 check sh -c 'command -v magick || command -v convert'
 check command -v pw-record
 check command -v pw-play

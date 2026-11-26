@@ -8,7 +8,7 @@
 #   --no-deps   skip system packages: just build and set up
 #   --only      build only these binaries (default: all three)
 #
-# Steps: system packages (sudo; Debian/Ubuntu, Fedora/RHEL, Arch and
+# Steps: system packages (sudo; Debian/Ubuntu, Fedora, RHEL 9, Arch and
 # their derivatives), a Go check, `go build` into ~/.local/bin, a default
 # config, the deskview user unit, agent skills. Safe to rerun.
 set -eu
@@ -75,6 +75,13 @@ for id in ${ID:-} ${ID_LIKE:-}; do
 done
 # Ubuntu derivatives (Mint, Pop) list "ubuntu debian": Ubuntu wins above
 
+# EL 10's EPEL has no TigerVNC Xvnc, xfwm4 or xdotool (yet): no
+# half-install, refuse it as an unknown distro is
+if [ "$family" = rhel ] && [ "${VERSION_ID%%.*}" != 9 ]; then
+  family=
+  rhel_note=" (RHEL-family: only EL 9 has every package, EL ${VERSION_ID%%.*} lacks TigerVNC's Xvnc, xfwm4 or xdotool)"
+fi
+
 # Chromium: native everywhere except Ubuntu, which only has the snap
 browser='"chromium"'
 main_profile=
@@ -103,8 +110,10 @@ packages() {
       ;;
     fedora|rhel)
       echo tigervnc-server-minimal xorg-x11-xauth xsetroot xfwm4 ffmpeg \
-        xdotool scrot ImageMagick dejavu-sans-fonts git golang \
-        pipewire-utils xterm chromium
+        xdotool ImageMagick dejavu-sans-fonts git golang pipewire-utils \
+        xterm chromium
+      # EPEL 9 has no scrot: screenshots take ImageMagick's import
+      [ "$1" = fedora ] && echo scrot
       ;;
     arch)
       echo tigervnc xorg-xauth xorg-xsetroot xfwm4 ffmpeg xdotool scrot \
@@ -114,15 +123,19 @@ packages() {
 }
 
 # rpmfusion: Fedora and RHEL's ffmpeg with x264 lives in RPM Fusion
-# (Fedora's own ffmpeg-free has no x264); RHEL needs EPEL too.
+# (Fedora's own ffmpeg-free has no x264). RHEL needs EPEL (xfwm4,
+# xdotool, Chromium) and CRB (ffmpeg's ladspa) too.
 rpmfusion() {
   rpm -q rpmfusion-free-release >/dev/null 2>&1 && return 0
 
-  ask "Enable RPM Fusion free (ffmpeg with x264)${1:+ and EPEL}?" ||
+  repos="RPM Fusion free (ffmpeg with x264)"
+  [ "$1" = rhel ] && repos="EPEL, CRB and $repos"
+  ask "Enable $repos?" ||
     die "ffmpeg needs RPM Fusion; rerun, or install it and use --no-deps"
 
   if [ "$1" = rhel ]; then
     root dnf install -y epel-release
+    root crb enable # EPEL's helper: RHEL, Rocky and Alma alike
     release=$(rpm -E %rhel)
   else
     release=$(rpm -E %fedora)
@@ -135,7 +148,7 @@ rpmfusion() {
 
 install_deps() {
   [ -n "$family" ] ||
-    die "unsupported distro ($ID): install the packages by hand (see README), then --no-deps"
+    die "unsupported distro ($ID ${VERSION_ID:-})${rhel_note:-}: install the packages by hand (see README), then --no-deps"
 
   list=$(packages "$family" | tr '\n' ' ')
   say "System packages ($family): $list"

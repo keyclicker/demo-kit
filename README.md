@@ -25,9 +25,11 @@ cd demo-kit
 `install.sh` asks before each step, and is safe to rerun:
 
 1. System packages with `sudo`: TigerVNC, xfwm4, ffmpeg, xdotool, scrot,
-   ImageMagick, PipeWire tools, Chromium, Go. Debian, Ubuntu, Fedora, RHEL,
-   Arch and their derivatives. Fedora and RHEL get ffmpeg from RPM Fusion;
-   Ubuntu gets Chromium from Flathub (no snap).
+   ImageMagick, PipeWire tools, Chromium, Go. Debian, Ubuntu, Fedora,
+   RHEL 9, Arch and their derivatives. Fedora and RHEL get ffmpeg from
+   RPM Fusion, RHEL also EPEL and CRB, but no scrot (screenshots use
+   ImageMagick's `import`); EL 10 lacks packages and is refused. Ubuntu
+   gets Chromium from Flathub (no snap).
 2. `go build` of `desk`, `demo` and `deskview` into `~/.local/bin`.
 3. A starter config, the `deskview` user service, and the skills linked
    into `~/.claude/skills` and `~/.codex/skills`.
