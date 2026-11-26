@@ -51,3 +51,28 @@ func TestXauthSourcesStdin(t *testing.T) {
 		t.Error("a bad command succeeded")
 	}
 }
+
+// A desk display's cookie is desk's file; the host display's, the
+// caller's own.
+func TestXauthority(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XAUTHORITY", "/run/user/1000/gdm/Xauthority")
+	desk := filepath.Join(home, ".Xauthority")
+
+	for display, want := range map[string]string{
+		":21": desk, ":10": desk,
+		":0": "/run/user/1000/gdm/Xauthority",
+	} {
+		if got, err := xauthority(display); err != nil || got != want {
+			t.Errorf("xauthority(%q) = %q, %v; want %q", display, got,
+				err, want)
+		}
+	}
+
+	t.Setenv("XAUTHORITY", "")
+	if got, _ := xauthority(":0"); got != desk {
+		t.Errorf("xauthority(:0) without $XAUTHORITY = %q; want %q", got,
+			desk)
+	}
+}

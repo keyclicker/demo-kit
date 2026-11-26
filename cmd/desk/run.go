@@ -56,13 +56,16 @@ func cmdRun(args []string) error {
 
 	// Agents' clients read ~/.Xauthority by default, so the cookie goes
 	// there; Xvnc gets its own copy in the private runtime dir.
-	home, err := os.UserHomeDir()
+	userAuth, err := xauthority(display)
 	if err != nil {
 		return err
 	}
-
-	userAuth := filepath.Join(home, ".Xauthority")
 	serverAuth := serverAuthPath(n)
+
+	// For the whole process: xgb (maximize.go) and children alike
+	if err := os.Setenv("XAUTHORITY", userAuth); err != nil {
+		return err
+	}
 
 	cookie := make([]byte, 16)
 	rand.Read(cookie)
@@ -112,7 +115,7 @@ func cmdRun(args []string) error {
 
 	// ---- Session ----
 
-	env := append(os.Environ(), "DISPLAY="+display, "XAUTHORITY="+userAuth)
+	env := append(os.Environ(), "DISPLAY="+display)
 
 	root := exec.Command("xsetroot", "-solid", background)
 	root.Env = env
@@ -246,6 +249,25 @@ func writeToken(n int, owner Owner) error {
 	return os.Rename(tmp, tokenPath(n))
 }
 
+// xauthority is the file display's cookie is in. A desk display's is
+// ~/.Xauthority, where desk run writes it and agents' clients look by
+// default; any other display's, the caller's own ($XAUTHORITY, set by
+// GDM, SDDM or mutter's Xwayland, else ~/.Xauthority).
+func xauthority(display string) (string, error) {
+	if _, err := parseDisplay(display); err != nil {
+		if auth := os.Getenv("XAUTHORITY"); auth != "" {
+			return auth, nil
+		}
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(home, ".Xauthority"), nil
+}
+
 // xauth runs xauth commands on file, fed on stdin (`source -`): argv
 // is world-readable in /proc, a cookie must not be. xauth locks the
 // file itself.
@@ -294,9 +316,9 @@ func cmdCleanup(args []string) error {
 	os.Remove(tokenPath(n))
 	os.Remove(serverAuthPath(n))
 
-	if home, err := os.UserHomeDir(); err == nil {
-		xauth(filepath.Join(home, ".Xauthority"),
-			"remove :"+strconv.Itoa(n))
+	display := ":" + strconv.Itoa(n)
+	if auth, err := xauthority(display); err == nil {
+		xauth(auth, "remove "+display)
 	}
 
 	// A killed Xvnc leaves its lock and socket; keep a live server's

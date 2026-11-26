@@ -109,6 +109,11 @@ the finished videos: path, plus a link when `publish.url` is set);
   - `pause`/`resume`/`stop` need the recording's owner, or `--force`
 - `desk new` holds `stateDir/.lock` until the unit is ready (unit is
   `Type=notify`), so parallel calls never share a display
+- X authority: `xauthority(display)` is the one answer. A desk
+  display's cookie is in `~/.Xauthority`; the host display's in the
+  caller's own (`$XAUTHORITY`: GDM, SDDM, Xwayland keep it elsewhere).
+  `desk run` sets it for its whole process (xgb and children agree);
+  the recorder and the browser supervisor get it too
 - Units get the caller's `XDG_*` dirs (`unitEnv`, `--setenv`): the
   user manager may lack them, and the unit must read the same config
 - `:0` on Wayland is Xwayland: `claim` and `rec :0` refuse it
@@ -127,6 +132,10 @@ and learn it from the `hybrid-browser` skill.
   Testing: no automation flags (`navigator.webdriver` false). Flatpak
   is just config (`["flatpak", "run", "org.chromium.Chromium"]`)
 - Gets `PULSE_SINK=desk-N` when that sink is up: its sound is recorded
+- Env (`browserEnv`): the display and its `xauthority`, no
+  `WAYLAND_DISPLAY` or `XDG_SESSION_TYPE`: with them a recent Chromium
+  opens on the user's Wayland desktop. No flags for it: `browser.command`
+  is the user's
 - A browser is its DevTools port, never a process found in `/proc`:
   launchers that fork work, and the user's own Chromium can't be hit
 - Profiles: `temp` (default): fresh, deleted on exit, any number in

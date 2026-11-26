@@ -228,12 +228,17 @@ func cmdBrowserSupervise(args []string) error {
 		"--start-maximized",
 	)
 
+	display := r.get("display")
+	auth, err := xauthority(display)
+	if err != nil {
+		return err
+	}
+
 	cmd := exec.Command(command[0], append(browserArgs, args[1:]...)...)
-	cmd.Env = append(os.Environ(), "DISPLAY="+r.get("display"))
+	cmd.Env = browserEnv(os.Environ(), display, auth)
 
 	// Sound into the display's sink, so its recording hears the page
-	if n, err := parseDisplay(r.get("display")); err == nil &&
-		sinkUp(sinkName(n)) {
+	if n, err := parseDisplay(display); err == nil && sinkUp(sinkName(n)) {
 		cmd.Env = append(cmd.Env, "PULSE_SINK="+sinkName(n))
 	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
@@ -252,4 +257,22 @@ func cmdBrowserSupervise(args []string) error {
 
 	os.RemoveAll(r.dir)
 	return runErr
+}
+
+// browserEnv is the browser's environment: environ on display, with
+// that display's X authority, minus Wayland's variables, with which a
+// recent Chromium opens on the user's Wayland desktop instead.
+func browserEnv(environ []string, display, auth string) []string {
+	env := []string{"DISPLAY=" + display, "XAUTHORITY=" + auth}
+
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		switch name {
+		case "DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE":
+			continue
+		}
+		env = append(env, kv)
+	}
+
+	return env
 }

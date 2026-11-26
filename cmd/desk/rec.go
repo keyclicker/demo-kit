@@ -289,7 +289,7 @@ func startRec(n int, owner Owner, video string) error {
 		return err
 	}
 
-	home, err := os.UserHomeDir()
+	auth, err := xauthority(":" + strconv.Itoa(n))
 	if err != nil {
 		return err
 	}
@@ -302,7 +302,7 @@ func startRec(n int, owner Owner, video string) error {
 		"--property=Type=notify", "--property=TimeoutStartSec=30",
 		"--property=TimeoutStopSec=120", "--property=KillMode=mixed",
 		fmt.Sprintf("--property=ExecStopPost=%s rec cleanup %d", self, n),
-		"--setenv=XAUTHORITY=" + filepath.Join(home, ".Xauthority"),
+		"--setenv=XAUTHORITY=" + auth,
 	}
 
 	// A desk display's recording lives and dies with it, and stops

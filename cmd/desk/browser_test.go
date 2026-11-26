@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -91,5 +92,19 @@ func TestSeedWidevineEmptyCache(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(profile, "WidevineCdm")); err == nil {
 		t.Error("seeded a CDM from an empty cache")
+	}
+}
+
+// The browser gets the display and its authority, never the caller's
+// Wayland session.
+func TestBrowserEnv(t *testing.T) {
+	got := browserEnv([]string{"HOME=/h", "DISPLAY=:0",
+		"XAUTHORITY=/run/gdm/auth", "WAYLAND_DISPLAY=wayland-0",
+		"XDG_SESSION_TYPE=wayland", "LANG=C"}, ":21", "/h/.Xauthority")
+
+	want := []string{"DISPLAY=:21", "XAUTHORITY=/h/.Xauthority",
+		"HOME=/h", "LANG=C"}
+	if !slices.Equal(got, want) {
+		t.Errorf("browserEnv = %q; want %q", got, want)
 	}
 }
