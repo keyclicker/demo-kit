@@ -158,6 +158,12 @@ and learn it from the `hybrid-browser` skill.
   `desk browser supervise` runs the browser, waits for its port to
   close, then deletes the run. Both hold `lock`; `start` sweeps runs
   whose lock is free (reboot, kill -9)
+  - A launcher that returns (`systemd-run`, `flatpak run`) leaves the
+    port to tell: up while it ran, or within 30 s of a clean exit
+    (`startWait`), and the run lives until the port closes, uncapped
+  - A port that never comes up is a failed launch: the supervisor
+    exits, run and log kept. `start` sees the lock go, prints the log's
+    tail and removes the run, instead of waiting out its 30 s
 - Widevine: Chromium downloads it ~1 min into a profile's first
   launch and loads it only on the next. The newest CDM a temp
   profile downloaded is cached in `$XDG_CACHE_HOME/demo-kit/widevine`

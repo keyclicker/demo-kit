@@ -204,9 +204,10 @@ func (r browserRun) supervise(lock *os.File, urls []string) error {
 	return cmd.Process.Release()
 }
 
-// cmdBrowserSupervise runs browser.command for run DIR in the
-// foreground, then removes the run: `browser supervise DIR [URL...]`,
-// from start only.
+// cmdBrowserSupervise runs browser.command for run DIR, waits until its
+// DevTools port closes, then removes the run: `browser supervise DIR
+// [URL...]`, from start only. A launch that never brings the port up
+// leaves the run, for start to report its log and remove.
 func cmdBrowserSupervise(args []string) error {
 	if len(args) < 1 {
 		return errors.New("browser supervise: run dir required")
@@ -242,12 +243,30 @@ func cmdBrowserSupervise(args []string) error {
 		cmd.Env = append(cmd.Env, "PULSE_SINK="+sinkName(n))
 	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	runErr := cmd.Run()
 
-	// A launcher (flatpak run) may return before the browser does: the
-	// browser is gone once its DevTools port is
 	port, _ := strconv.Atoi(r.get("port"))
-	waitFor(func() bool { return !devToolsUp(port) }, 30*time.Second)
+	if err := cmd.Start(); err != nil {
+		return err // the run stays, log included, for start to report
+	}
+
+	launcher := make(chan struct{})
+	seen := watchUp(port, launcher)
+	runErr := cmd.Wait()
+	close(launcher)
+
+	// A launcher that forks (systemd-run, flatpak run) may return before
+	// or while its browser lives: the browser is its port. One that
+	// failed never brought it up
+	up := <-seen || runErr == nil &&
+		waitFor(func() bool { return devToolsUp(port) }, startWait)
+	if !up {
+		fmt.Fprintf(os.Stderr, "no DevTools on port %d: %v\n", port, runErr)
+		return runErr // the run stays, log included, for start to report
+	}
+
+	for tcpBound(port) {
+		time.Sleep(200 * time.Millisecond)
+	}
 
 	if profile == r.path("temp-profile") {
 		if err := harvestWidevine(profile); err != nil {
@@ -257,6 +276,26 @@ func cmdBrowserSupervise(args []string) error {
 
 	os.RemoveAll(r.dir)
 	return runErr
+}
+
+// watchUp polls DevTools on port until it answers or done closes, then
+// sends whether it answered.
+func watchUp(port int, done <-chan struct{}) <-chan bool {
+	seen := make(chan bool, 1)
+
+	go func() {
+		for !devToolsUp(port) {
+			select {
+			case <-done:
+				seen <- devToolsUp(port)
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+		seen <- true
+	}()
+
+	return seen
 }
 
 // browserEnv is the browser's environment: environ on display, with

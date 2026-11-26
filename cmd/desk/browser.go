@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -126,9 +127,11 @@ func cmdBrowserStart(args []string) error {
 		return err
 	}
 
-	if err := waitDevTools(port, 30*time.Second); err != nil {
-		closeBrowser(port)
-		return fmt.Errorf("%w (log: %s)", err, r.path("log"))
+	// The supervisor holds the run now: let go, so its exit shows
+	lock.Close()
+
+	if err := r.waitStarted(port); err != nil {
+		return err
 	}
 
 	fmt.Println(port)
@@ -298,12 +301,44 @@ func devToolsUp(port int) bool {
 	return true
 }
 
-// waitDevTools polls the DevTools endpoint until it answers.
-func waitDevTools(port int, timeout time.Duration) error {
-	if !waitFor(func() bool { return devToolsUp(port) }, timeout) {
-		return fmt.Errorf("no DevTools on port %d after %s", port, timeout)
+// startWait bounds a launch: how long start waits for DevTools, and the
+// supervisor for a forking launcher's browser.
+const startWait = 30 * time.Second
+
+// waitStarted waits for run r's DevTools on port. A run whose
+// supervisor gave up (the launch failed, leaving its log) fails at
+// once, with the log's tail, and goes.
+func (r browserRun) waitStarted(port int) error {
+	up := func() bool { return devToolsUp(port) }
+	waitFor(func() bool { return up() || !r.alive() }, startWait)
+
+	switch {
+	case up():
+		return nil
+
+	case !r.alive():
+		tail := logTail(r.path("log"), 10)
+		os.RemoveAll(r.dir)
+		return fmt.Errorf("browser didn't start:\n%s", tail)
 	}
-	return nil
+
+	closeBrowser(port)
+	return fmt.Errorf("no DevTools on port %d after %s (log: %s)", port,
+		startWait, r.path("log"))
+}
+
+// logTail is the last n lines of the log at path, or why there are none.
+func logTail(path string, n int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err.Error()
+	}
+
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ===== Helpers =====
