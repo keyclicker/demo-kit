@@ -47,7 +47,8 @@ func TestLoadDefaults(t *testing.T) {
 		"desk.host_display": ":0",
 		"video.encoder":     "auto",
 		"video.render_node": "auto",
-		"demo.voice":        "Umbriel",
+		"tts.voice":         "Umbriel",
+		"tts.key_env":       "OPENROUTER_API_KEY",
 		"demo.sink":         "",
 		"publish.root":      home + "/.local/share/demo-kit",
 		"publish.url":       "",
@@ -82,8 +83,8 @@ url = "https://node/files/"
 	if !c.Record.Audio {
 		t.Error("record.audio = false: unset keys keep defaults")
 	}
-	if c.Demo.Voice != "Umbriel" {
-		t.Errorf("demo.voice = %q: unset keys keep defaults", c.Demo.Voice)
+	if c.TTS.Voice != "Umbriel" {
+		t.Errorf("tts.voice = %q: unset keys keep defaults", c.TTS.Voice)
 	}
 }
 
@@ -98,6 +99,11 @@ func TestLoadRejects(t *testing.T) {
 		"bad display":   "[desk]\nhost_display = \"0\"\n",
 		"bad encoder":   "[video]\nencoder = \"nvenc\"\n",
 		"bad node":      "[video]\nrender_node = \"renderD128\"\n",
+		"moved voice":   "[demo]\nvoice = \"Charon\"\n",
+		"bad tts url":   "[tts]\nurl = \"localhost:8880\"\n",
+		"bad key_env":   "[tts]\nkey_env = \"sk-or-123\"\n",
+		"no model":      "[tts]\nmodel = \"\"\n",
+		"bad tempo":     "[tts]\ntempo = 9\n",
 	}
 
 	for name, body := range cases {
@@ -141,11 +147,11 @@ func TestCmd(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := Cmd("demo", c, []string{"demo.voice"}, &out); err != nil {
+	if err := Cmd("demo", c, []string{"tts.voice"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "Umbriel\n" {
-		t.Errorf("demo config demo.voice = %q", out.String())
+		t.Errorf("demo config tts.voice = %q", out.String())
 	}
 
 	out.Reset()

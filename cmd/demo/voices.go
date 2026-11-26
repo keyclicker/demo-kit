@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path"
 	"slices"
 	"strings"
 )
@@ -13,8 +14,9 @@ import (
 type geminiVoice struct{ name, style string }
 
 // geminiVoices are the voice names Gemini TTS takes, all tried on
-// gemini-3.8-flash-tts. OpenRouter has no voices API, and a wrong name
-// fails with a bare "Provider returned 400": checkVoice names it first.
+// gemini-3.8-flash-tts. The OpenAI-style API has no voices list, and a
+// wrong name fails with a bare "Provider returned 400": checkVoice
+// names it first.
 var geminiVoices = []geminiVoice{
 	{"Umbriel", "easy-going"}, {"Puck", "upbeat"},
 	{"Charon", "informative"}, {"Fenrir", "excitable"},
@@ -33,9 +35,9 @@ var geminiVoices = []geminiVoice{
 }
 
 // isGemini reports whether model is a Gemini TTS, which takes only
-// geminiVoices.
+// geminiVoices: "google/gemini-*" on OpenRouter, "gemini-*" at Google.
 func isGemini(model string) bool {
-	return strings.HasPrefix(model, "google/gemini")
+	return strings.HasPrefix(path.Base(model), "gemini-")
 }
 
 // checkVoice rejects a voice name its model doesn't have, when the
@@ -59,7 +61,7 @@ func cmdVoices(args []string) error {
 		return nil
 	}
 
-	fmt.Printf("Gemini voices (%s, any google/gemini-*-tts), "+
+	fmt.Printf("Gemini voices (any gemini-*-tts; tts.model is %s), "+
 		"by Google's style:\n", defaultVoice.Model)
 	for _, g := range geminiVoices {
 		mark := ""
@@ -70,6 +72,7 @@ func cmdVoices(args []string) error {
 	}
 	fmt.Println("\nOther models take their own names (Kokoro am_michael," +
 		" Grok Rex, ElevenLabs Liam).\nPick one in a script's or" +
-		` scene's voice: {"name": "Charon"}; try it: demo say --voice NAME`)
+		` scene's voice: {"name": "Charon"}, or tts.voice in the` +
+		" config for all; try it: demo say --voice NAME")
 	return nil
 }

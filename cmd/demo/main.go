@@ -84,7 +84,12 @@ var cfg config.Config
 // configure makes c the config in effect, defaults included.
 func configure(c config.Config) {
 	cfg = c
-	defaultVoice.Name = c.Demo.Voice
+	defaultVoice = Voice{
+		Model:        c.TTS.Model,
+		Name:         c.TTS.Voice,
+		Instructions: c.TTS.Instructions,
+		Tempo:        c.TTS.Tempo,
+	}
 }
 
 // signalContext is a command's context: canceled on SIGINT or SIGTERM,

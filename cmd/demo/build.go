@@ -474,7 +474,7 @@ func videoPath(script, out string, preview bool) (string, error) {
 type builder struct {
 	script *Script
 	work   string
-	key    string
+	tts    ttsEngine
 	draft  bool
 
 	// How scene videos come out (fitFilter, sceneCodec)
@@ -652,14 +652,13 @@ func (b *builder) speak(ctx context.Context) error {
 	var wg sync.WaitGroup
 	limit := make(chan struct{}, 6) // requests in flight
 
-	// The key only when a line has to be bought: a cached build works
-	// without one
+	// Ready only when a line has to be bought: a cached build works
+	// without a key
+	b.tts = newEngine(cfg.TTS)
 	if uncached(scenes) {
-		key, err := apiKey()
-		if err != nil {
+		if err := b.tts.ready(); err != nil {
 			return err
 		}
-		b.key = key
 	}
 
 	for i, s := range scenes {
@@ -672,7 +671,7 @@ func (b *builder) speak(ctx context.Context) error {
 				limit <- struct{}{}
 				defer func() { <-limit }()
 
-				sp, err := speak(ctx, b.key, *s.Voice, p.Say)
+				sp, err := speak(ctx, b.tts, *s.Voice, p.Say)
 				if err == nil {
 					durs[i][k], err = probeDuration(ctx, sp.Wav)
 				}
@@ -1075,7 +1074,7 @@ func (b *builder) report(ctx context.Context, video string,
 		lines = append(lines, scene...)
 	}
 	if len(lines) > 0 {
-		fmt.Println(billOf(ctx, b.key, lines))
+		fmt.Println(billOf(ctx, b.tts, lines))
 	}
 }
 

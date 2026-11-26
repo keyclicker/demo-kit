@@ -95,10 +95,10 @@ func TestSpeakWritesReceipt(t *testing.T) {
 			w.Write(make([]byte, 4800)) // 0.1 s of silence
 		}))
 	defer srv.Close()
-	apiBase = srv.URL
+	tts := testEngine(srv.URL)
 
 	ctx := context.Background()
-	sp, err := speak(ctx, "k", defaultVoice, "hi")
+	sp, err := speak(ctx, tts, defaultVoice, "hi")
 	if err != nil || !sp.New {
 		t.Fatalf("first: %+v %v", sp, err)
 	}
@@ -107,7 +107,7 @@ func TestSpeakWritesReceipt(t *testing.T) {
 		t.Fatalf("receipt: %+v %v %v", r, ok, err)
 	}
 
-	if again, err := speak(ctx, "k", defaultVoice, "hi"); err != nil ||
+	if again, err := speak(ctx, tts, defaultVoice, "hi"); err != nil ||
 		again.New || again.Wav != sp.Wav {
 		t.Fatalf("again: %+v %v", again, err)
 	}
@@ -133,7 +133,7 @@ func TestBillOf(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		}))
 	defer srv.Close()
-	apiBase = srv.URL
+	tts := testEngine(srv.URL)
 	defer func(wait time.Duration) { priceWait = wait }(priceWait)
 	priceWait = 0
 
@@ -153,7 +153,7 @@ func TestBillOf(t *testing.T) {
 	lost := line("lost", &receipt{GenID: "gen-lost"})
 
 	ctx := context.Background()
-	bill := billOf(ctx, "k", []spoken{{Wav: fresh, New: true},
+	bill := billOf(ctx, tts, []spoken{{Wav: fresh, New: true},
 		{Wav: fresh}, {Wav: priced}, {Wav: old}, {Wav: lost}})
 
 	want := speechBill{New: 1, NewUSD: 0.002, Cached: 3, CachedUSD: 0.003,
@@ -170,7 +170,7 @@ func TestBillOf(t *testing.T) {
 	if r, _, _ := readReceipt(fresh); r.USD == nil || *r.USD != 0.002 {
 		t.Fatalf("receipt not priced: %+v", r)
 	}
-	billOf(ctx, "k", []spoken{{Wav: fresh}, {Wav: priced}})
+	billOf(ctx, tts, []spoken{{Wav: fresh}, {Wav: priced}})
 	if lookups["gen-new"] != 1 || lookups["gen-old"] != 0 {
 		t.Fatalf("lookups: %v", lookups)
 	}

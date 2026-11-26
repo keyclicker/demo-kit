@@ -254,7 +254,7 @@ done
 
 say "Done"
 wants desk && echo "  desk new      a display for an agent (desk -h)"
-wants demo && echo "  demo -h       narrated videos; speech: OPENROUTER_API_KEY in $config_dir/.env"
+wants demo && echo "  demo -h       narrated videos; speech: $("$bin/demo" config tts.key_env) in $config_dir/.env"
 wants deskview &&
   echo "  deskview      http://$("$bin/deskview" config deskview.addr)/"
 exit 0

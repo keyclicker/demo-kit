@@ -17,15 +17,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/keyclicker/demo-kit/internal/config"
 	"github.com/keyclicker/demo-kit/internal/paths"
 )
 
 // ---- Voice ----
 
-// Voice is how narration sounds. The defaults: Gemini 3.8 Flash TTS,
-// voice Umbriel; Puck is the second choice. Flash, never lite: lite is
-// cheaper, but these demos are listened to.
+// Voice is how narration sounds, on the engine config tts sets up.
 type Voice struct {
 	Model        string  `json:"model,omitempty"`
 	Name         string  `json:"name,omitempty"`
@@ -33,12 +30,9 @@ type Voice struct {
 	Tempo        float64 `json:"tempo,omitempty"` // speed-up, pitch kept
 }
 
-var defaultVoice = Voice{
-	Model: "google/gemini-3.8-flash-tts", // Name: demo.voice, by configure
-	Instructions: "Adult male voice. Fast, energetic pacing, like a " +
-		"podcast host. Casual, dry-humored. Not whispery, not intimate.",
-	Tempo: 1.2,
-}
+// defaultVoice is the voice scripts start from: config tts's, set by
+// configure.
+var defaultVoice Voice
 
 // over fills the fields v leaves empty from base: a script's voice
 // over defaultVoice, a scene's over the script's.
@@ -70,7 +64,7 @@ type spoken struct {
 // voice and text in $XDG_CACHE_HOME/demo-kit/tts: rebuilding a demo after a
 // narration edit only pays for the lines that changed. Beside each wav,
 // its receipt says what it cost when made.
-func speak(ctx context.Context, key string, v Voice,
+func speak(ctx context.Context, e ttsEngine, v Voice,
 	text string) (spoken, error) {
 
 	wav, err := cachePath(v, text)
@@ -87,7 +81,7 @@ func speak(ctx context.Context, key string, v Voice,
 		return spoken{Wav: wav}, nil
 	}
 
-	sp, err := synthesize(ctx, key, speechRequest{
+	sp, err := e.synthesize(ctx, speechRequest{
 		Model:        v.Model,
 		Input:        text,
 		Voice:        v.Name,
@@ -175,18 +169,6 @@ func transcode(ctx context.Context, sp speech, tempo float64,
 	return ffmpeg(ctx, "", bytes.NewReader(sp.Audio), args...)
 }
 
-// apiKey returns the OpenRouter key, $OPENROUTER_API_KEY: from the
-// environment, or from .env beside the config (config.Load reads it).
-func apiKey() (string, error) {
-	key := strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
-	if key == "" {
-		path, _ := config.EnvPath()
-		return "", fmt.Errorf("no OpenRouter key: set $OPENROUTER_API_KEY, "+
-			"or put OPENROUTER_API_KEY=... in %s (chmod 600)", path)
-	}
-	return key, nil
-}
-
 // ---- demo say ----
 
 // cmdSay speaks text aloud on demo.sink, and saves it with -o.
@@ -215,12 +197,9 @@ func cmdSay(args []string) error {
 
 	ctx, stop := signalContext()
 	defer stop()
-	key, err := apiKey()
-	if err != nil {
-		return err
-	}
+	tts := newEngine(cfg.TTS)
 
-	sp, err := speak(ctx, key, *v, text)
+	sp, err := speak(ctx, tts, *v, text)
 	if err != nil {
 		return err
 	}
@@ -238,7 +217,7 @@ func cmdSay(args []string) error {
 	}
 
 	if *showCost {
-		fmt.Fprintf(os.Stderr, "demo: %s\n", billOf(ctx, key, []spoken{sp}))
+		fmt.Fprintf(os.Stderr, "demo: %s\n", billOf(ctx, tts, []spoken{sp}))
 	}
 
 	return nil
@@ -269,7 +248,7 @@ func play(ctx context.Context, wav string) error {
 // voiceFlags registers --model, --voice, --instructions and --tempo.
 func voiceFlags(fs *flag.FlagSet) *Voice {
 	v := defaultVoice
-	fs.StringVar(&v.Model, "model", v.Model, "OpenRouter TTS model")
+	fs.StringVar(&v.Model, "model", v.Model, "TTS model, as tts.url names it")
 	fs.StringVar(&v.Name, "voice", v.Name,
 		"voice name (demo voices); empty: model default")
 	fs.StringVar(&v.Instructions, "instructions", v.Instructions,
@@ -339,7 +318,9 @@ var priceWait = 30 * time.Second
 
 // price is what wav cost when made, from its receipt, looked up (and
 // written into the receipt) the first time; false when unknown.
-func price(ctx context.Context, key, wav string) (float64, bool, error) {
+func price(ctx context.Context, e ttsEngine,
+	wav string) (float64, bool, error) {
+
 	r, ok, err := readReceipt(wav)
 	switch {
 	case err != nil:
@@ -348,12 +329,10 @@ func price(ctx context.Context, key, wav string) (float64, bool, error) {
 		return 0, false, nil
 	case r.USD != nil:
 		return *r.USD, true, nil
-	case key == "":
-		return 0, false, nil // a cached build has no key to look it up
 	}
 
-	usd, err := generationCost(ctx, key, r.GenID, priceWait)
-	if err != nil {
+	usd, ok, err := e.price(ctx, r.GenID, priceWait)
+	if err != nil || !ok {
 		return 0, false, err
 	}
 	r.USD = &usd
@@ -382,7 +361,7 @@ func (b speechBill) String() string {
 
 // billOf prices lines in parallel. A failed lookup warns and leaves its
 // line unpriced: the bill still prints.
-func billOf(ctx context.Context, key string, lines []spoken) speechBill {
+func billOf(ctx context.Context, e ttsEngine, lines []spoken) speechBill {
 	fresh := map[string]bool{}
 	for _, sp := range lines {
 		fresh[sp.Wav] = fresh[sp.Wav] || sp.New
@@ -394,7 +373,7 @@ func billOf(ctx context.Context, key string, lines []spoken) speechBill {
 
 	for wav, isNew := range fresh {
 		wg.Go(func() {
-			usd, ok, err := price(ctx, key, wav)
+			usd, ok, err := price(ctx, e, wav)
 
 			mu.Lock()
 			defer mu.Unlock()
