@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -67,7 +68,7 @@ type spoken struct {
 func speak(ctx context.Context, e ttsEngine, v Voice,
 	text string) (spoken, error) {
 
-	wav, err := cachePath(v, text)
+	wav, err := cachePath(e, v, text)
 	if err != nil {
 		return spoken{}, err
 	}
@@ -81,12 +82,10 @@ func speak(ctx context.Context, e ttsEngine, v Voice,
 		return spoken{Wav: wav}, nil
 	}
 
-	sp, err := e.synthesize(ctx, speechRequest{
-		Model:        v.Model,
-		Input:        text,
-		Voice:        v.Name,
-		Instructions: v.Instructions,
-	})
+	if err := e.ready(); err != nil {
+		return spoken{}, err
+	}
+	sp, err := e.synthesize(ctx, v, text)
 	if err != nil {
 		return spoken{}, err
 	}
@@ -136,8 +135,8 @@ func (k *keyLocks) lock(key string) *sync.Mutex {
 	return m
 }
 
-// cachePath names the cached wav of text in voice v.
-func cachePath(v Voice, text string) (string, error) {
+// cachePath names the cached wav of text in voice v on engine e.
+func cachePath(e ttsEngine, v Voice, text string) (string, error) {
 	dir, err := paths.Cache()
 	if err != nil {
 		return "", err
@@ -148,9 +147,10 @@ func cachePath(v Voice, text string) (string, error) {
 	}
 
 	key, _ := json.Marshal(struct {
+		E string
 		V Voice
 		T string
-	}{v, text})
+	}{e.name(), v, text})
 	sum := sha256.Sum256(key)
 
 	return filepath.Join(dir, hex.EncodeToString(sum[:16])+".wav"), nil
@@ -160,7 +160,7 @@ func cachePath(v Voice, text string) (string, error) {
 func transcode(ctx context.Context, sp speech, tempo float64,
 	wav string) error {
 
-	args := append(pcmInput(sp.ContentType), "-i", "pipe:0")
+	args := append(slices.Clone(sp.Input), "-i", "pipe:0")
 	if tempo != 1 {
 		args = append(args, "-af", fmt.Sprintf("atempo=%g", tempo))
 	}
@@ -317,7 +317,8 @@ func writeReceipt(wav string, r receipt) error {
 var priceWait = 30 * time.Second
 
 // price is what wav cost when made, from its receipt, looked up (and
-// written into the receipt) the first time; false when unknown.
+// written into the receipt) the first time; false when unknown. The
+// receipt is e's: wavs are cached per engine.
 func price(ctx context.Context, e ttsEngine,
 	wav string) (float64, bool, error) {
 
@@ -331,7 +332,11 @@ func price(ctx context.Context, e ttsEngine,
 		return *r.USD, true, nil
 	}
 
-	usd, ok, err := e.price(ctx, r.GenID, priceWait)
+	pricer, ok := e.(ttsPricer)
+	if !ok {
+		return 0, false, nil
+	}
+	usd, ok, err := pricer.price(ctx, r.GenID, priceWait)
 	if err != nil || !ok {
 		return 0, false, err
 	}

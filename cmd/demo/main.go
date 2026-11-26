@@ -1,6 +1,6 @@
 // Command demo makes short narrated videos: demos and explainers of
-// software (a feature, a change, a codebase, a PR). Speech from
-// OpenRouter TTS, code drawn with focus that follows the narration,
+// software (a feature, a change, a codebase, a PR). Speech from any
+// OpenAI-compatible TTS (config tts), code drawn with focus that follows the narration,
 // recordings fast-cut to fit it, captions and chapters.
 package main
 
@@ -33,7 +33,7 @@ const usageText = `demo: narrated demo and explainer videos, and speech
 
 Recordings come from desk (desk new records; desk rec for more).
 Script format and workflow: the demo skill. Each command: -h.
-Speech needs $OPENROUTER_API_KEY. Config: demo config -h.
+Speech: config [tts], its key from $<tts.key_env>. Config: demo config -h.
 `
 
 func main() {

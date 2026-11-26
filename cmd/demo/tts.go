@@ -23,34 +23,36 @@ import (
 // server (hosted or local), is the one there is; a local engine run as
 // a program (piper, a Python script) would be another.
 type ttsEngine interface {
+	// name tells engines apart: the speech cache is keyed by it, so
+	// one server's audio is never passed off as another's.
+	name() string
+
 	// ready says why the engine can't synthesize (no key, no binary),
 	// before a build spends time on a line it can't buy.
 	ready() error
 
-	// synthesize speaks req.Input in req's voice.
-	synthesize(ctx context.Context, req speechRequest) (speech, error)
+	// synthesize speaks text in v's model, name and instructions; the
+	// tempo is applied after, to any engine's audio.
+	synthesize(ctx context.Context, v Voice, text string) (speech, error)
+}
 
-	// price looks up what a synthesis cost by its speech.GenID; ok is
-	// false when the engine can't tell (no pricing API, no key).
+// ttsPricer is an engine that can say what a synthesis cost.
+type ttsPricer interface {
+	// price looks up a synthesis by its speech.GenID, polling for up
+	// to wait; ok is false when it can't tell (no key, say).
 	price(ctx context.Context, genID string,
 		wait time.Duration) (usd float64, ok bool, err error)
 }
 
-// speechRequest is the body of POST /audio/speech. Empty fields are
-// left out, so the provider's defaults apply.
-type speechRequest struct {
-	Model          string `json:"model"`
-	Input          string `json:"input"`
-	Voice          string `json:"voice,omitempty"`
-	Instructions   string `json:"instructions,omitempty"`
-	ResponseFormat string `json:"response_format"`
-}
-
-// speech is synthesized audio as the engine returned it.
+// speech is synthesized audio, ready for ffmpeg.
 type speech struct {
-	Audio       []byte
-	ContentType string // e.g. "audio/pcm;rate=24000;channels=1"
-	GenID       string // for price; "" when the engine has none
+	Audio []byte
+
+	// Input is ffmpeg's input flags for Audio when it can't probe it
+	// (raw PCM: -f s16le -ar 24000 -ac 1); nil for wav, mp3 and such.
+	Input []string
+
+	GenID string // for ttsPricer; "" when there's none
 }
 
 // newEngine returns the engine config tts describes. Its key is read
@@ -77,6 +79,21 @@ type openaiTTS struct {
 // ttsClient gives up on a stalled request: a demo build must end
 var ttsClient = &http.Client{Timeout: 2 * time.Minute}
 
+// speechRequest is the body of POST /audio/speech. Empty fields are
+// left out, so the provider's defaults apply.
+type speechRequest struct {
+	Model          string `json:"model"`
+	Input          string `json:"input"`
+	Voice          string `json:"voice,omitempty"`
+	Instructions   string `json:"instructions,omitempty"`
+	ResponseFormat string `json:"response_format"`
+}
+
+// name is the API base: the same model elsewhere may sound different.
+func (e *openaiTTS) name() string {
+	return "openai " + e.base
+}
+
 // ready fails when the key is due but unset.
 func (e *openaiTTS) ready() error {
 	if e.keyEnv == "" || e.key != "" {
@@ -93,14 +110,16 @@ func (e *openaiTTS) ready() error {
 // (Gemini TTS takes nothing else). It waits out rate limits and a
 // full in-flight budget (OpenRouter reserves each running request's
 // worst case against the key's limit) a few times before failing.
-func (e *openaiTTS) synthesize(ctx context.Context,
-	req speechRequest) (speech, error) {
+func (e *openaiTTS) synthesize(ctx context.Context, v Voice,
+	text string) (speech, error) {
 
-	if err := e.ready(); err != nil {
-		return speech{}, err
+	req := speechRequest{
+		Model:          v.Model,
+		Input:          text,
+		Voice:          v.Name,
+		Instructions:   v.Instructions,
+		ResponseFormat: "pcm",
 	}
-
-	req.ResponseFormat = "pcm"
 	body, err := json.Marshal(req)
 	if err != nil {
 		return speech{}, err
@@ -156,9 +175,9 @@ func (e *openaiTTS) synthesizeOnce(ctx context.Context, model string,
 	}
 
 	return speech{
-		Audio:       audio,
-		ContentType: res.Header.Get("Content-Type"),
-		GenID:       res.Header.Get("X-Generation-Id"),
+		Audio: audio,
+		Input: pcmInput(res.Header.Get("Content-Type")),
+		GenID: res.Header.Get("X-Generation-Id"),
 	}, 0, nil
 }
 
@@ -173,8 +192,8 @@ func retryAfter(header string) time.Duration {
 }
 
 // price polls GET /generation until OpenRouter has priced the request
-// (it lags a few seconds), giving up after wait. Without a key it
-// can't ask: unknown, not an error.
+// (it lags a few seconds: 404 till then), giving up after wait.
+// Without a key it can't ask: unknown, not an error.
 func (e *openaiTTS) price(ctx context.Context, id string,
 	wait time.Duration) (float64, bool, error) {
 
@@ -201,15 +220,22 @@ func (e *openaiTTS) price(ctx context.Context, id string,
 		}
 		res.Body.Close()
 
+		pending := res.StatusCode == http.StatusNotFound &&
+			time.Now().Before(deadline)
 		switch {
 		case ok && err == nil:
 			return gen.Data.TotalCost, true, nil
 		case ok:
 			return 0, false, fmt.Errorf("generation %s: %w", id, err)
-		case time.Now().After(deadline):
+		case !pending:
 			return 0, false, fmt.Errorf("generation %s: %s", id, res.Status)
 		}
-		time.Sleep(2 * time.Second)
+
+		select {
+		case <-ctx.Done():
+			return 0, false, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 

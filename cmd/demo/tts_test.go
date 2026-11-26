@@ -49,7 +49,7 @@ func TestSynthesizeAndCost(t *testing.T) {
 	tts := testEngine(srv.URL)
 
 	ctx := context.Background()
-	sp, err := tts.synthesize(ctx, speechRequest{Model: "m", Input: "hi"})
+	sp, err := tts.synthesize(ctx, Voice{Model: "m"}, "hi")
 	if err != nil || string(sp.Audio) != "pcm" || sp.GenID != "gen-1" {
 		t.Fatalf("synthesize: %+v %v", sp, err)
 	}
@@ -95,7 +95,8 @@ func TestSynthesizeRetriesBusy(t *testing.T) {
 			if calls++; calls == 1 {
 				w.Header().Set("Retry-After", "1")
 				w.WriteHeader(http.StatusPaymentRequired)
-				w.Write([]byte(`{"error":{"metadata":{"reason":"in_flight_budget_exhausted"}}}`))
+				w.Write([]byte(`{"error":{"metadata":` +
+					`{"reason":"in_flight_budget_exhausted"}}}`))
 				return
 			}
 			w.Write([]byte("pcm"))
@@ -104,8 +105,7 @@ func TestSynthesizeRetriesBusy(t *testing.T) {
 	tts := testEngine(srv.URL)
 
 	start := time.Now()
-	sp, err := tts.synthesize(context.Background(),
-		speechRequest{Model: "m", Input: "hi"})
+	sp, err := tts.synthesize(context.Background(), Voice{Model: "m"}, "hi")
 	if err != nil || string(sp.Audio) != "pcm" || calls != 2 {
 		t.Fatalf("got %+v, %v after %d calls", sp, err, calls)
 	}
@@ -129,7 +129,8 @@ func testEngine(url string) *openaiTTS {
 }
 
 // A keyless engine (a local server) is ready, sends no Authorization
-// and, naming no generation, prices nothing; a keyed one without its key isn't ready
+// and, naming no generation, prices nothing. A keyed one sends its
+// key, and without it isn't ready
 func TestEngineKeys(t *testing.T) {
 	var auth []string
 	srv := httptest.NewServer(http.HandlerFunc(
@@ -145,22 +146,31 @@ func TestEngineKeys(t *testing.T) {
 		t.Fatalf("keyless not ready: %v", err)
 	}
 	sp, err := local.synthesize(context.Background(),
-		speechRequest{Model: "kokoro", Input: "hi"})
+		Voice{Model: "kokoro"}, "hi")
 	if err != nil || sp.GenID != "" || len(auth) != 1 || auth[0] != "" {
 		t.Fatalf("keyless: %+v %v, auth %q", sp, err, auth)
 	}
-	if _, ok, err := local.price(context.Background(), sp.GenID, 0); ok ||
+	if _, ok, err := local.(ttsPricer).price(context.Background(),
+		sp.GenID, 0); ok ||
 		err != nil || len(auth) != 1 {
 		t.Fatalf("keyless price: ok %v, err %v, auth %q", ok, err, auth)
 	}
 
-	t.Setenv("TEST_TTS_KEY", "")
+	t.Setenv("TEST_TTS_KEY", " sk-1\n")
 	keyed := newEngine(config.TTS{URL: srv.URL, KeyEnv: "TEST_TTS_KEY"})
+	if _, err := keyed.synthesize(context.Background(),
+		Voice{Model: "m"}, "hi"); err != nil || auth[1] != "Bearer sk-1" {
+		t.Fatalf("keyed: %v, auth %q", err, auth)
+	}
+
+	t.Setenv("TEST_TTS_KEY", "")
+	keyed = newEngine(config.TTS{URL: srv.URL, KeyEnv: "TEST_TTS_KEY"})
 	if err := keyed.ready(); err == nil ||
 		!strings.Contains(err.Error(), "TEST_TTS_KEY") {
 		t.Fatalf("keyed without key: %v", err)
 	}
-	if _, ok, err := keyed.price(context.Background(), "gen-1", 0); ok ||
+	pricer := keyed.(ttsPricer)
+	if _, ok, err := pricer.price(context.Background(), "gen-1", 0); ok ||
 		err != nil {
 		t.Fatalf("keyed price without key: %v %v", ok, err)
 	}

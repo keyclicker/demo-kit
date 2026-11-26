@@ -37,19 +37,21 @@ func TestVoiceDefaults(t *testing.T) {
 	}
 }
 
-// The cache key covers voice and text: change either, new speech
+// The cache key covers engine, voice and text: change any, new speech
 func TestCachePathKeys(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	hosted, local := testEngine("https://api"), testEngine("http://local")
 
-	a, _ := cachePath(defaultVoice, "hi")
-	b, _ := cachePath(defaultVoice, "hi")
-	c, _ := cachePath(defaultVoice, "hi!")
+	a, _ := cachePath(hosted, defaultVoice, "hi")
+	b, _ := cachePath(hosted, defaultVoice, "hi")
+	c, _ := cachePath(hosted, defaultVoice, "hi!")
 	fast := defaultVoice
 	fast.Tempo = 2
-	d, _ := cachePath(fast, "hi")
+	d, _ := cachePath(hosted, fast, "hi")
+	e, _ := cachePath(local, defaultVoice, "hi")
 
-	if a != b || a == c || a == d {
-		t.Fatalf("cache paths: %s %s %s %s", a, b, c, d)
+	if a != b || a == c || a == d || a == e {
+		t.Fatalf("cache paths: %s %s %s %s %s", a, b, c, d, e)
 	}
 }
 
@@ -76,8 +78,15 @@ func TestCheckVoice(t *testing.T) {
 	}
 
 	// Other models' names aren't known here: they pass
-	if err := checkVoice(Voice{Model: "x/kokoro", Name: "am_michael"}); err != nil {
+	kokoro := Voice{Model: "x/kokoro", Name: "am_michael", Tempo: 1}
+	if err := checkVoice(kokoro); err != nil {
 		t.Errorf("kokoro: %v", err)
+	}
+
+	// A script's tempo has the config's range
+	kokoro.Tempo = 9
+	if err := checkVoice(kokoro); err == nil {
+		t.Error("tempo 9 passed")
 	}
 }
 

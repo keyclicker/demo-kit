@@ -99,7 +99,6 @@ func TestLoadRejects(t *testing.T) {
 		"bad display":   "[desk]\nhost_display = \"0\"\n",
 		"bad encoder":   "[video]\nencoder = \"nvenc\"\n",
 		"bad node":      "[video]\nrender_node = \"renderD128\"\n",
-		"moved voice":   "[demo]\nvoice = \"Charon\"\n",
 		"bad tts url":   "[tts]\nurl = \"localhost:8880\"\n",
 		"bad key_env":   "[tts]\nkey_env = \"sk-or-123\"\n",
 		"no model":      "[tts]\nmodel = \"\"\n",
@@ -114,6 +113,16 @@ func TestLoadRejects(t *testing.T) {
 				t.Error("loaded without error")
 			}
 		})
+	}
+}
+
+// An old config's renamed key says where it went
+func TestLoadMovedKey(t *testing.T) {
+	write(t, isolate(t), "[demo]\nvoice = \"Charon\"\n")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "now tts.voice") {
+		t.Fatalf("got %v, want a hint to tts.voice", err)
 	}
 }
 

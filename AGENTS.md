@@ -338,18 +338,22 @@ change to the tool and the skill by that.
 - `say [text]`: speaks on `demo.sink` (default: the default output)
   with `pw-play`; no PipeWire prints the wav instead; `-o FILE`,
   `--no-play`, `--cost`
-- TTS (`tts.go`): engines behind `ttsEngine` (`ready`, `synthesize`,
-  `price`), built from config `tts` (`newEngine`). The one there is,
-  `openaiTTS`: any OpenAI-compatible `{tts.url}/audio/speech`, hosted
-  (OpenRouter, the default) or local (Kokoro-FastAPI, Speaches). A
-  local engine run as a program would be another `ttsEngine`
+- TTS (`tts.go`): engines behind `ttsEngine` (`name`, `ready`,
+  `synthesize`: a `Voice` and text in, audio plus its ffmpeg input
+  flags out), built from config `tts` (`newEngine`); pricing is the
+  optional `ttsPricer`. The one there is, `openaiTTS`: any
+  OpenAI-compatible `{tts.url}/audio/speech`, hosted (OpenRouter, the
+  default) or local (Kokoro-FastAPI, Speaches). A local engine run as a
+  program would be another `ttsEngine`, plus a `tts` key choosing it
   - `response_format: pcm`, the only format
   every provider takes (Gemini TTS refuses mp3). Rate and channels come
   from `Content-Type` (`pcmInput`); ffmpeg decodes to a 48 kHz wav,
   `atempo` speeds it up (pitch kept)
-  - Cache: `$XDG_CACHE_HOME/demo-kit/tts/<sha256(voice, text)>.wav`:
-    rebuilds only pay for changed lines. Keyed by model name, not
-    `tts.url`: the same model elsewhere is the same voice. Beside each, a receipt `<same>.json`: its
+  - Cache: `$XDG_CACHE_HOME/demo-kit/tts/<sha256(engine, voice,
+    text)>.wav`: rebuilds only pay for changed lines. The engine's
+    `name` (`openaiTTS`: its URL) is in the key: servers share model
+    names (`tts-1`, `alloy`) but not audio, and a receipt is always
+    its own engine's Beside each, a receipt `<same>.json`: its
     generation ID, and its price once looked up
   - Default voice (`defaultVoice`, from `tts.model`, `tts.voice`,
     `tts.instructions`, `tts.tempo`): `google/gemini-3.8-flash-tts`,
@@ -365,7 +369,8 @@ change to the tool and the skill by that.
     the environment or the `.env` beside the config (`config.Load`);
     `""` sends none. A build asks (`ready`) only when a line isn't cached
   - Cost: OpenRouter's `GET /generation?id=<X-Generation-Id>`, only
-    when a response carries that header (else unpriced), priced a few seconds
+    when a response carries that header (else unpriced); 404 until
+    priced, any other error ends it. Priced a few seconds
     late, so it polls for up to 30 s; ~$0.0017 per 7 s line. Kept in
     the receipt. Build and `say --cost` print new spend and the cached
     share (`billOf`): `tts $0.0042 new (3 lines), 9 cached ($0.0150)`,

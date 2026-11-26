@@ -5,6 +5,8 @@ import (
 	"path"
 	"slices"
 	"strings"
+
+	"github.com/keyclicker/demo-kit/internal/config"
 )
 
 // ---- Voices ----
@@ -40,9 +42,13 @@ func isGemini(model string) bool {
 	return strings.HasPrefix(path.Base(model), "gemini-")
 }
 
-// checkVoice rejects a voice name its model doesn't have, when the
-// names are known (Gemini); other models' names pass through.
+// checkVoice rejects a tempo out of range, and a voice name its model
+// doesn't have when the names are known (Gemini); other models' names
+// pass through.
 func checkVoice(v Voice) error {
+	if err := config.CheckTempo(v.Tempo); err != nil {
+		return err
+	}
 	if !isGemini(v.Model) || v.Name == "" {
 		return nil
 	}

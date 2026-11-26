@@ -655,7 +655,7 @@ func (b *builder) speak(ctx context.Context) error {
 	// Ready only when a line has to be bought: a cached build works
 	// without a key
 	b.tts = newEngine(cfg.TTS)
-	if uncached(scenes) {
+	if uncached(b.tts, scenes) {
 		if err := b.tts.ready(); err != nil {
 			return err
 		}
@@ -712,11 +712,11 @@ func (b *builder) speak(ctx context.Context) error {
 }
 
 // uncached reports whether any line scenes say is missing from the TTS
-// cache (cachePath).
-func uncached(scenes []Scene) bool {
+// cache (cachePath) of engine e.
+func uncached(e ttsEngine, scenes []Scene) bool {
 	for _, s := range scenes {
 		for _, p := range s.parts() {
-			wav, err := cachePath(*s.Voice, p.Say)
+			wav, err := cachePath(e, *s.Voice, p.Say)
 			if err != nil {
 				return true
 			}

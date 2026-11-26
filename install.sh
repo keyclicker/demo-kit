@@ -254,7 +254,11 @@ done
 
 say "Done"
 wants desk && echo "  desk new      a display for an agent (desk -h)"
-wants demo && echo "  demo -h       narrated videos; speech: $("$bin/demo" config tts.key_env) in $config_dir/.env"
+if wants demo; then
+  key_env=$("$bin/demo" config tts.key_env)
+  key=${key_env:+"$key_env in $config_dir/.env"}
+  echo "  demo -h       narrated videos; speech key: ${key:-none}"
+fi
 wants deskview &&
   echo "  deskview      http://$("$bin/deskview" config deskview.addr)/"
 exit 0

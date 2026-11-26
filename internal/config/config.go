@@ -168,8 +168,24 @@ type TTS struct {
 	// Instructions direct delivery (Gemini, OpenAI); "" sends none.
 	Instructions string `toml:"instructions"`
 
-	// Tempo speeds speech up, pitch kept (ffmpeg atempo), 0.5-4.
+	// Tempo speeds speech up, pitch kept (ffmpeg atempo), MinTempo to
+	// MaxTempo.
 	Tempo float64 `toml:"tempo"`
+}
+
+// MinTempo and MaxTempo bound a voice's tempo, here and in scripts:
+// slower drags, faster garbles.
+const (
+	MinTempo = 0.5
+	MaxTempo = 4.0
+)
+
+// CheckTempo rejects a tempo outside MinTempo-MaxTempo.
+func CheckTempo(tempo float64) error {
+	if tempo < MinTempo || tempo > MaxTempo {
+		return fmt.Errorf("tempo %g: want %g-%g", tempo, MinTempo, MaxTempo)
+	}
+	return nil
 }
 
 // Deskview configures the viewer: one web page with every display.
@@ -196,6 +212,10 @@ type Publish struct {
 	// URL is Root's public base URL; "" means files get no links.
 	URL string `toml:"url"`
 }
+
+// movedKeys maps renamed keys to their new names, so the unknown-key
+// error says where an old config's key went.
+var movedKeys = map[string]string{"demo.voice": "tts.voice"}
 
 var (
 	sizeRE    = regexp.MustCompile(`^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$`)
@@ -245,6 +265,9 @@ func Load() (Config, error) {
 		keys := make([]string, len(extra))
 		for i, k := range extra {
 			keys[i] = k.String()
+			if to, ok := movedKeys[keys[i]]; ok {
+				keys[i] += " (now " + to + ")"
+			}
 		}
 		return Config{}, fmt.Errorf("%s: unknown keys: %s", path,
 			strings.Join(keys, ", "))
@@ -400,8 +423,8 @@ func (t TTS) check() error {
 		return errors.New("tts.model: needs a model")
 	}
 
-	if t.Tempo < 0.5 || t.Tempo > 4 {
-		return fmt.Errorf("tts.tempo: %g: want 0.5-4", t.Tempo)
+	if err := CheckTempo(t.Tempo); err != nil {
+		return fmt.Errorf("tts.%w", err)
 	}
 
 	return nil
