@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/keyclicker/demo-kit/internal/config"
 	"github.com/keyclicker/demo-kit/internal/paths"
@@ -103,6 +104,11 @@ func speak(ctx context.Context, e ttsEngine, v Voice,
 		return spoken{}, err
 	}
 
+	// An empty or error body may decode to an empty wav: never cache one
+	if err := checkSpeech(ctx, sp, f.Name()); err != nil {
+		return spoken{}, fmt.Errorf("speech for %q: %w", text, err)
+	}
+
 	// The receipt first: a cached wav always has one
 	if err := writeReceipt(wav, receipt{GenID: sp.GenID}); err != nil {
 		return spoken{}, err
@@ -168,6 +174,33 @@ func transcode(ctx context.Context, sp speech, tempo float64,
 	args = append(args, "-ar", "48000", "-ac", "1", wav)
 
 	return ffmpeg(ctx, "", bytes.NewReader(sp.Audio), args...)
+}
+
+// minSpeech is the shortest wav a line may be: anything shorter is no
+// speech at all, and a cached one would fail every later build.
+const minSpeech = 0.05
+
+// checkSpeech fails when wav, sp decoded, is shorter than minSpeech,
+// saying what the server sent.
+func checkSpeech(ctx context.Context, sp speech, wav string) error {
+	secs, err := probeDuration(ctx, wav)
+	if err == nil && secs >= minSpeech {
+		return nil
+	}
+
+	sent := fmt.Sprintf("%d bytes", len(sp.Audio))
+	if body := bytes.TrimSpace(sp.Audio); isText(body) {
+		sent += fmt.Sprintf(" of text: %.200q", body) // a JSON error, say
+	}
+
+	return fmt.Errorf("no audio: the server sent %s", sent)
+}
+
+// isText reports whether b is non-empty UTF-8 without control bytes
+// other than newlines and tabs.
+func isText(b []byte) bool {
+	control := func(c byte) bool { return c < 0x20 && c != '\n' && c != '\t' }
+	return len(b) > 0 && utf8.Valid(b) && !slices.ContainsFunc(b, control)
 }
 
 // ---- demo say ----

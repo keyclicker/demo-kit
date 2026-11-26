@@ -407,8 +407,11 @@ change to the tool and the skill by that.
     text)>.wav`: rebuilds only pay for changed lines. The engine's
     `name` (`openaiTTS`: its URL) is in the key: servers share model
     names (`tts-1`, `alloy`) but not audio, and a receipt is always
-    its own engine's Beside each, a receipt `<same>.json`: its
+    its own engine's. Beside each, a receipt `<same>.json`: its
     generation ID, and its price once looked up
+  - A decoded line under 0.05 s (`checkSpeech`: an empty body, a JSON
+    error under `audio/pcm`) fails, naming what the server sent; no wav,
+    no receipt: a cached empty wav would fail every later build
   - Default voice (`defaultVoice`, from `tts.model`, `tts.voice`,
     `tts.instructions`, `tts.tempo`): `google/gemini-3.8-flash-tts`,
     `Umbriel`, brisk male instructions, tempo 1.2 (~18 chars/s); second
