@@ -220,7 +220,8 @@ as the proxy strips the prefix and both forms arrive as `/`.
 - Headless boxes: `examples/pipewire-null-sink.conf`, a virtual
   default output, so nothing plays out loud
 - `/files/`: `publish.root`, read-only, dot-names hidden in paths and
-  listings (`hideDots`)
+  listings (`hideDots`). Only directories are wrapped: a wrapped file
+  loses `Seek`, and with it Range requests (video seeking)
 
 ## demo
 

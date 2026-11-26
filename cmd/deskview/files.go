@@ -20,7 +20,15 @@ func (h hideDots) Open(name string) (fs.File, error) {
 		return nil, err
 	}
 
-	if dir, ok := f.(fs.ReadDirFile); ok {
+	// Directories only: every *os.File is a ReadDirFile, and wrapped, a
+	// file loses Seek (Range requests, type sniffing)
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+
+	if dir, ok := f.(fs.ReadDirFile); ok && info.IsDir() {
 		return dotlessDir{dir}, nil
 	}
 	return f, nil
