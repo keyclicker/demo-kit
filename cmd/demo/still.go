@@ -115,13 +115,11 @@ func trimCut(ctx context.Context, w io.Writer, s Scene, c span) (span,
 
 	quiet := []span{c}
 	if s.Audio {
-		length, err := probeDuration(ctx, s.Clip)
+		snd, err := listen(ctx, s.Clip)
 		if err != nil {
 			return c, err
 		}
-		if quiet, err = pauses(ctx, s.Clip, length); err != nil {
-			return c, err
-		}
+		quiet = snd.pauses
 	}
 
 	t, ok := trimStill(c, kept, quiet)
@@ -172,7 +170,7 @@ func deadAir(stills, quiet []span) []span {
 func (b *builder) warnDeadAir(ctx context.Context, w io.Writer,
 	video string) error {
 
-	length, err := probeDuration(ctx, video)
+	snd, err := listen(ctx, video)
 	if err != nil {
 		return err
 	}
@@ -180,12 +178,8 @@ func (b *builder) warnDeadAir(ctx context.Context, w io.Writer,
 	if err != nil {
 		return err
 	}
-	quiet, err := pauses(ctx, video, length)
-	if err != nil {
-		return err
-	}
 
-	for _, d := range deadAir(stills(kept, length), quiet) {
+	for _, d := range deadAir(stills(kept, snd.length), snd.pauses) {
 		fmt.Fprintf(w, "demo: dead air %s-%s (%.1f s, scene %d): nothing "+
 			"moves or speaks: say more, cut the clip, or drop secs\n",
 			clockTenths(d.from), clockTenths(d.to), d.to-d.from,

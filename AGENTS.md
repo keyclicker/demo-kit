@@ -260,6 +260,9 @@ change to the tool and the skill by that.
     beginning it; a file whose last 0.1 s is loud (cut mid-speech) is
     cut back to its last pause. Moves and misses are printed; moves
     that cross keep the script's own cuts
+  - The audio stream's own end counts, not the file's (`listen`): a
+    recording's sound stops a few frames before its picture. Past it
+    is quiet, unless the sound ends loud; "last 0.1 s" is the audio's
   - Still edges (`still.go`), after the pause moves: a cut starts 0.5 s
     before its first change and ends 0.5 s after its last
     (`trimStill`); with sound kept, its first and last sounds count
