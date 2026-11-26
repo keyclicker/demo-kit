@@ -76,7 +76,7 @@ func cmdBrowser(args []string) error {
 
 func cmdBrowserStart(args []string) error {
 	fs := flag.NewFlagSet("browser start", flag.ExitOnError)
-	display := fs.String("display", "", "X display, e.g. :10 from desk new")
+	display := fs.String("display", "", "X display, e.g. :20 from desk new")
 	profileName := fs.String("profile", "temp", "temp, main or a directory")
 	fs.Parse(args)
 

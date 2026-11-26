@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	flag "github.com/spf13/pflag"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,10 +24,18 @@ import (
 var stateDir string
 
 const (
-	// Display numbers desk may hand out; VNC port is basePort + N.
-	firstDisplay = 10
-	lastDisplay  = 99
-	basePort     = 5900
+	// Desk display numbers; VNC port is basePort + N. New ones start
+	// at firstNewDisplay: sshd forwards X from :10 up
+	// (X11DisplayOffset), sharing ~/.Xauthority's entries. 10-19 stay
+	// valid for desktops started before.
+	firstDisplay    = 10
+	firstNewDisplay = 20
+	lastDisplay     = 99
+	basePort        = 5900
+
+	// x11Port is display 0's X TCP port, where sshd's forwarded
+	// displays listen (loopback only, no socket or lock file).
+	x11Port = 6000
 
 	// managedMark tags token files desk wrote; a token file is in
 	// websockify's TokenFile format, the mark a comment to it.
@@ -425,7 +434,7 @@ func unitEnv() []string {
 
 // freeDisplay returns the lowest display number nothing else holds.
 func freeDisplay() (int, error) {
-	for n := firstDisplay; n <= lastDisplay; n++ {
+	for n := firstNewDisplay; n <= lastDisplay; n++ {
 		taken, err := displayTaken(n)
 		if err != nil {
 			return 0, err
@@ -436,16 +445,16 @@ func freeDisplay() (int, error) {
 		}
 	}
 
-	return 0, fmt.Errorf("no free display in :%d-:%d", firstDisplay,
+	return 0, fmt.Errorf("no free display in :%d-:%d", firstNewDisplay,
 		lastDisplay)
 }
 
 // displayTaken reports whether anything holds display n: an X server,
-// desk's registry, or a desk unit.
+// an sshd-forwarded display, desk's registry, or a desk unit.
 func displayTaken(n int) (bool, error) {
 	if exists(fmt.Sprintf("/tmp/.X11-unix/X%d", n)) ||
 		exists(fmt.Sprintf("/tmp/.X%d-lock", n)) ||
-		exists(tokenPath(n)) {
+		tcpBound(x11Port+n) || exists(tokenPath(n)) {
 		return true, nil
 	}
 
@@ -456,6 +465,23 @@ func displayTaken(n int) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// tcpBound reports whether something listens on port on loopback, IPv4
+// or IPv6. Binding is the test: it fails only with the port in use.
+func tcpBound(port int) bool {
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		l, err := net.Listen("tcp", net.JoinHostPort(host,
+			strconv.Itoa(port)))
+		if errors.Is(err, syscall.EADDRINUSE) {
+			return true
+		}
+		if err == nil {
+			l.Close()
+		}
+	}
+
+	return false
 }
 
 // lockState takes the exclusive allocation lock in stateDir.

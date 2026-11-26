@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -117,5 +118,27 @@ func TestListKeepsStateWhenSystemdFails(t *testing.T) {
 	}
 	if readRec(21) != nil || exists(tokenPath(21)) || exists(recPath(21)) {
 		t.Fatal("stale state kept")
+	}
+}
+
+// sshd's forwarded displays have only a loopback TCP port: a bound
+// 6000+N takes N, IPv4 or IPv6 alike.
+func TestTCPBound(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		l, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+		if err != nil {
+			t.Logf("%s: %v (skipped)", host, err)
+			continue
+		}
+
+		port := l.Addr().(*net.TCPAddr).Port
+		if !tcpBound(port) {
+			t.Errorf("%s:%d bound, tcpBound says free", host, port)
+		}
+
+		l.Close()
+		if tcpBound(port) {
+			t.Errorf("%s:%d closed, tcpBound says bound", host, port)
+		}
 	}
 }

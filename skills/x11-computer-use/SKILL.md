@@ -15,8 +15,8 @@ view-only in `deskview`; it records itself (`desk rm` saves the video)
 and dies with your process.
 
 ```sh
-desk new                    # → :10 (1280x960, GPU)
-desk rm :10                 # when done; prints the video path and URL
+desk new                    # → :20 (1280x960, GPU)
+desk rm :20                 # when done; prints the video path and URL
 ```
 
 The rest (`desk ls`, recording by hand, browsers): `desk --help`.
@@ -26,9 +26,9 @@ Too sluggish or broken there? Use the user's own display
 `desk claim` (exit 3 = user active: ask, then `desk claim --force`),
 `desk release` and close your windows when done.
 
-- Prefix every command: `DISPLAY=:10 …` (shell state doesn't persist)
-- Start apps detached: `DISPLAY=:10 setsid -f xterm`
-- Sound: `PULSE_SINK=desk-10` too (the display's own sink), so the
+- Prefix every command: `DISPLAY=:20 …` (shell state doesn't persist)
+- Start apps detached: `DISPLAY=:20 setsid -f xterm`
+- Sound: `PULSE_SINK=desk-20` too (the display's own sink), so the
   recording hears it. Not on `:0`: it records what the user hears
 - Terminal: Ghostty as the `demo` skill launches it (its own instance,
   a demo zsh, no tmux). Plain `ghostty` may open in the user's Ghostty
@@ -58,7 +58,7 @@ On `:0`, after `desk claim`: `desk rec start :0` ... `desk rec stop :0`.
 ## Screenshots and focus
 
 Screenshots and zooms go to files in your scratch dir, one name per
-display and moment (`…/x11-10-153012.png`): agents running at once
+display and moment (`…/x11-20-153012.png`): agents running at once
 must not share one file. View each with your image tool. After every
 action, take a fresh one and check it worked before the next step.
 

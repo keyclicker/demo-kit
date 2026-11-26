@@ -26,8 +26,12 @@ the finished videos: path, plus a link when `publish.url` is set);
 `desk rec start|pause|resume|stop :N`. Agents learn it from the
 `x11-computer-use` skill (`skills/`).
 
-- Desktop `:N` (10-99) = transient user unit `desk-N`, main process
+- Desktop `:N` (20-99) = transient user unit `desk-N`, main process
   `desk run --owner PID:START N WxH`:
+  - Not 10-19: sshd forwards X from `:10` (`X11DisplayOffset`) into
+    the same `~/.Xauthority` entries, and its displays are loopback TCP
+    only (6000+N), no socket or lock. `freeDisplay` also skips any N
+    whose port is bound. Older desktops on 10-19 still list and `rm`
   - `Xtigervnc` (else `Xvnc`) `:N -rendernode NODE`: GL on the GPU via
     DRI3. NODE is `video.render_node`, passed only when this Xvnc has
     the flag (TigerVNC 1.14+); else software GL. VNC on `127.0.0.1:59NN`, which ignores all VNC input

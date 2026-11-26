@@ -57,8 +57,8 @@ agent-browser connect $P
 desk browser stop $P
 ```
 
-Sound: each display has its own sink, `desk-10` for `:10`. Start apps
-with `PULSE_SINK=desk-10` and their sound lands in its recording (and
+Sound: each display has its own sink, `desk-20` for `:20`. Start apps
+with `PULSE_SINK=desk-20` and their sound lands in its recording (and
 still plays on your output); `desk browser` does it for you.
 
 Watch: open `http://127.0.0.1:8737/` (deskview). Agent displays are
@@ -192,14 +192,14 @@ directory yourself.
 
 ## Troubleshooting
 
-- `desk new` fails: `journalctl --user -u desk-10` (the display number)
+- `desk new` fails: `journalctl --user -u desk-20` (the display number)
 - No GPU acceleration: `desk config video.render_node`; TigerVNC before
   1.14 has no `-rendernode` and falls back to software GL
 - Recordings use x264 on a GPU machine: VAAPI's test encode failed;
   `video.encoder = "vaapi"` shows why
 - `desk claim :0` refuses: the host runs Wayland; use `desk new`
-- A recording has no sound: `journalctl --user -u desk-rec-10` says
-  why; the app needs `PULSE_SINK=desk-10`
+- A recording has no sound: `journalctl --user -u desk-rec-20` says
+  why; the app needs `PULSE_SINK=desk-20`
 
 ## License
 
