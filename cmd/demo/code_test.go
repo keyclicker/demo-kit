@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -519,4 +520,29 @@ func inked(img *image.RGBA, r image.Rectangle) bool {
 		}
 	}
 	return false
+}
+
+// git ends ---/+++ paths holding a space with a tab: it's no part of
+// the path, quoted or not
+func TestParseDiffSpacedPaths(t *testing.T) {
+	diff := "diff --git a/my file.go b/my file.go\n" +
+		"--- a/my file.go\t\n+++ b/my file.go\t\n" +
+		"@@ -1 +1,2 @@\n a\n+b\n" +
+		"diff --git \"a/q\\\"t .go\" \"b/q\\\"t .go\"\n" +
+		"--- \"a/q\\\"t .go\"\t\n+++ \"b/q\\\"t .go\"\t\n" +
+		"@@ -1 +1,2 @@\n x\n+y\n"
+
+	files, err := parseDiff(diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, f.Path)
+	}
+	if want := []string{"my file.go", `q"t .go`}; !slices.Equal(paths,
+		want) {
+		t.Fatalf("paths %q; want %q", paths, want)
+	}
 }

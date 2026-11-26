@@ -318,7 +318,9 @@ func parseDiff(text string) ([]*codeFile, error) {
 			file.Binary = true
 
 		case strings.HasPrefix(line, "+++ "), strings.HasPrefix(line, "--- "):
-			p := strings.TrimPrefix(unquotePath(line[4:]), "b/")
+			// git ends a path holding a space with a tab, quoted or not
+			name := strings.TrimSuffix(line[4:], "\t")
+			p := strings.TrimPrefix(unquotePath(name), "b/")
 			if line[0] == '+' && p != "/dev/null" {
 				file.Path = p
 			}

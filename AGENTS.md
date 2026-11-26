@@ -343,8 +343,9 @@ change to the tool and the skill by that.
   hunks) first
   - Diffs: `git -c core.quotePath=false diff --src-prefix=a/
     --dst-prefix=b/`, so paths come plain whatever the config (paths
-    git still quotes are unquoted). `context` / `-U`: 3 unless set, 0
-    included
+    git still quotes are unquoted, and the tab git ends a `---`/`+++`
+    path holding a space with goes first). `context` / `-U`: 3 unless
+    set, 0 included
   - Characters JetBrains Mono lacks (emoji, CJK) draw as boxes: code
     and slide scenes warn, naming them (`warnGlyphs`); no font added
   - Overlays (fade, marks) are `color.NRGBA`: `color.RGBA` is
