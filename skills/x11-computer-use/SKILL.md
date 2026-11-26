@@ -53,7 +53,8 @@ time (installs, builds, waits): `desk rec pause :N`, then `resume`.
 Need custom clips (a demo video, the `demo` skill): `desk new --no-rec`,
 then `desk rec start [-o FILE] :N` and `desk rec stop :N`.
 
-On `:0`, after `desk claim`: `desk rec start :0` ... `desk rec stop :0`.
+On `:0`, after `desk claim`: `desk rec start :0` ... `desk rec stop :0`
+(`desk release` stops it too, printing the video).
 
 ## Screenshots and focus
 

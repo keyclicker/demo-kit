@@ -38,7 +38,7 @@ const usageText = `desk: disposable X displays for agents
                                      :0 (claimed). desk rec -h for details
 
   desk claim [--force] [:0]          take the user's :0 for yourself
-  desk release [:0]                  give it back
+  desk release [:0]                  give it back; stops its recording
 
   desk browser start --display :N [--profile P] [URL...]
                                      the agents' Chromium on :N, prints

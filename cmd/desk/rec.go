@@ -373,6 +373,12 @@ func cmdRecStop(args []string) error {
 		return fmt.Errorf(":%d isn't recording", n)
 	}
 
+	return stopRec(n, r)
+}
+
+// stopRec stops display n's recording r and prints the video. Callers
+// checked the caller may.
+func stopRec(n int, r *Recording) error {
 	// Blocks until the unit is down: video joined and final
 	stop := exec.Command("systemctl", "--user", "stop", recUnitName(n))
 	stop.Stderr = os.Stderr

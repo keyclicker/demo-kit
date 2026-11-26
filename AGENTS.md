@@ -74,7 +74,9 @@ the finished videos: path, plus a link when `publish.url` is set);
   claim on the host display, `stateDir/.claim-N` (same owner format;
   stale once the owner exits). Without `--force` it needs the user idle
   10+ min (XScreenSaver `MsSinceUserInput`, any input source), else
-  exits 3 so the agent asks. Another agent's live claim always blocks
+  exits 3 so the agent asks. Another agent's live claim always blocks.
+  `release` stops that display's recording first (`stopRec`, as `rec
+  stop`; the recording's owner or `--force`) and prints its video
 - `ExecStopPost=desk cleanup N` removes the token, cookie and a dead
   Xvnc's lock and socket, crashes included
 - Recording (`rec.go`, `record.go`): transient unit `desk-rec-N`, main
