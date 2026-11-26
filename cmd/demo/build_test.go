@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -216,5 +217,36 @@ func TestSilentClipLength(t *testing.T) {
 	}
 	if l := b.timings[0].Length; math.Abs(l-2) > 0.05 {
 		t.Fatalf("length %.2f, want the cut's 2 s", l)
+	}
+}
+
+// Decimating keeps a moving clip's real speed at any frame rate, and
+// shrinks an idle stretch to idleGap.
+func TestDecimateFilter(t *testing.T) {
+	noise := "color=c=gray:s=64x48:r=%d:d=%g,noise=alls=100:allf=t"
+	for _, tc := range []struct {
+		name   string
+		source string
+		want   float64
+	}{
+		{"10 fps", fmt.Sprintf(noise, 10, 2.0), 2},
+		{"30 fps", fmt.Sprintf(noise, 30, 2.0), 2},
+		{"60 fps", fmt.Sprintf(noise, 60, 2.0), 2},
+		{"idle 3 s", fmt.Sprintf(noise, 30, 1.0) +
+			",tpad=stop_mode=clone:stop_duration=3", 1 + idleGap},
+	} {
+		clip := lavfiClip(t, tc.source)
+		out := filepath.Join(t.TempDir(), "busy.mp4")
+
+		err := ffmpeg(context.Background(), "", nil, "-i", clip, "-vf",
+			decimateFilter(), "-c:v", "libx264", out)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := probeDuration(context.Background(), out)
+		if err != nil || math.Abs(got-tc.want) > 2.0/fps {
+			t.Errorf("%s: %g s, %v; want %g", tc.name, got, err, tc.want)
+		}
 	}
 }

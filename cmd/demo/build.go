@@ -289,7 +289,21 @@ const (
 	// maxSpeed warns past it: a clip that needs more is too long for
 	// its narration (cut From/To, or say more)
 	maxSpeed = 6.0
+
+	// idleGap is the most a decimated clip waits between changes: a
+	// longer gap was idle frames, dropped
+	idleGap = 0.1
 )
+
+// decimateFilter keeps only the frames where something changed
+// (mpdecimate), each after its real gap from the one before, capped at
+// idleGap, then brings them to the build's rate. Real gaps, not one
+// frame each: a 60 fps clip would play at half speed, a 10 fps one
+// triple, whatever rate it is brought to first.
+func decimateFilter() string {
+	return fmt.Sprintf("mpdecimate,setpts='if(eq(N,0),0,"+
+		"PREV_OUTPTS+min(PTS-PREV_INPTS,%s/TB))',fps=%d", ftoa(idleGap), fps)
+}
 
 // timing places a scene's spoken steps: step k speaks from Starts[k]
 // to Ends[k], its picture takes over at Cuts[k] (Cuts[0] = 0), Length
@@ -914,7 +928,7 @@ func (b *builder) clipScene(ctx context.Context, i int, s Scene, t timing,
 	// Pass 1: only frames where something changed, back to back
 	vf := b.fit
 	if s.decimate() {
-		vf = fmt.Sprintf("mpdecimate,setpts=N/%d/TB,%s", fps, b.fit)
+		vf = decimateFilter() + "," + b.fit
 	}
 	busy, busyWav := b.scenePath(i, "busy.mp4"), b.scenePath(i, "busy.wav")
 
