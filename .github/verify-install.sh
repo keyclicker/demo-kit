@@ -6,7 +6,7 @@ export PATH=$HOME/.local/bin:$PATH
 ok=0
 check() { if "$@" >/dev/null 2>&1; then echo "  ok   $*"; else echo "  FAIL $*"; ok=1; fi; }
 check desk config desk.size
-check demo config demo.voice
+check demo config tts.voice
 check deskview config deskview.addr
 check sh -c 'command -v Xtigervnc || command -v Xvnc'
 check command -v xfwm4
