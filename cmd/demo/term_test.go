@@ -3,6 +3,8 @@ package main
 import (
 	"slices"
 	"testing"
+
+	"github.com/keyclicker/demo-kit/internal/config"
 )
 
 func TestParseANSI(t *testing.T) {
@@ -78,14 +80,33 @@ func TestParseANSIEscapes(t *testing.T) {
 // A term scene never sees the TTS key, exported or not
 func TestTermEnv(t *testing.T) {
 	got := termEnv([]string{"HOME=/h", "OPENROUTER_API_KEY=sk-1",
-		"OPENROUTER_API_KEY_X=2"}, "OPENROUTER_API_KEY")
+		"OPENROUTER_API_KEY_X=2", "OTHER_KEY=sk-2"},
+		[]string{"OPENROUTER_API_KEY", "OTHER_KEY"})
 	want := []string{"HOME=/h", "OPENROUTER_API_KEY_X=2"}
 	if !slices.Equal(got, want) {
 		t.Errorf("termEnv = %q; want %q", got, want)
 	}
 
-	if got := termEnv([]string{"A=1"}, ""); !slices.Equal(got,
+	if got := termEnv([]string{"A=1"}, nil); !slices.Equal(got,
 		[]string{"A=1"}) {
 		t.Errorf("no key_env: %q", got)
+	}
+}
+
+// A flag's key variable joins the file's: neither reaches a term scene
+func TestKeyEnvs(t *testing.T) {
+	defer func(c config.Config, k []string) { keyEnvs = k; configure(c) }(
+		cfg, keyEnvs)
+	keyEnvs = nil
+
+	c := cfg
+	for _, name := range []string{"FILE_KEY", "FLAG_KEY", "FILE_KEY", ""} {
+		c.TTS.KeyEnv = name
+		configure(c)
+	}
+
+	if want := []string{"FILE_KEY", "FLAG_KEY"}; !slices.Equal(keyEnvs,
+		want) {
+		t.Errorf("keyEnvs = %q; want %q", keyEnvs, want)
 	}
 }

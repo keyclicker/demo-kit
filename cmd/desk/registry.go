@@ -504,3 +504,13 @@ func exists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
 }
+
+// tail is s's last n lines, the blank ones ending it aside: a log's or
+// a command's last word.
+func tail(s string, n int) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}

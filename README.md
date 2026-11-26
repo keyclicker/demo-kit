@@ -175,11 +175,12 @@ tailscale serve --bg --set-path /desktops http://127.0.0.1:8737
 or an SSH tunnel: `ssh -L 8737:127.0.0.1:8737 host`. Every URL in the
 page is relative, so a path prefix works.
 
-deskview answers only requests for `localhost`, `127.0.0.1` or `[::1]`
-(any port), so a web page that rebinds its own name to your loopback
-can't read it. A proxy that passes on the public name, as `tailscale
-serve` does, needs that name in `deskview.hosts`, else every request is
-a 403 naming the setting:
+deskview answers only requests for `localhost` or an IP address (any
+port), so a web page that rebinds its own name to your loopback can't
+read it. A proxy that passes on the public name, as `tailscale serve`
+does, needs that name in `deskview.hosts`, else every request is a 403
+naming the setting. List each name you open it under (a tailnet's
+short name is another one):
 
 ```toml
 [deskview]

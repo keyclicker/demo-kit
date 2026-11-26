@@ -127,9 +127,12 @@ func parseRecDisplay(s string) (int, error) {
 
 // printRecording reports a finished video: path, and its tailnet URL;
 // or, when the join failed, the parts left behind. video exists only
-// once joined whole (joinSegments).
+// once joined whole (joinSegments). Callers stopped the recorder.
 func printRecording(n int, video string) {
 	if !exists(video) {
+		// A recorder killed mid-join couldn't remove its half
+		os.Remove(joinTemp(video))
+
 		parts, _ := filepath.Glob(strings.TrimSuffix(video, ".mp4") +
 			".part*.mp4")
 		fmt.Printf(":%d recording not saved: %s (parts kept: %s; see "+

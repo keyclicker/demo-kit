@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strings"
 )
@@ -34,20 +35,21 @@ func knownHosts(next http.Handler) http.Handler {
 	})
 }
 
-// knownHost reports whether host (host or host:port) is loopback's
-// (localhost, 127.0.0.1, ::1) or in deskview.hosts, any port, case and
-// a trailing dot aside.
+// knownHost reports whether host (host or host:port) is localhost, an
+// IP address or in deskview.hosts, any port, case and a trailing dot
+// aside. Any address: rebinding needs a name to repoint, and an address
+// deskview.addr listens on is deskview's own.
 func knownHost(host string) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
 	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
 
-	switch host {
-	case "localhost", "127.0.0.1", "::1":
+	if host == "localhost" {
 		return true
-	case "":
-		return false
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return true
 	}
 
 	return slices.ContainsFunc(cfg.Deskview.Hosts, func(h string) bool {

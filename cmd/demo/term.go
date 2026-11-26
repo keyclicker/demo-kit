@@ -117,7 +117,7 @@ func runTerm(ctx context.Context, t TermSpec, scriptPath string) (
 		"never", "--command", "bash --noprofile --norc "+
 			shellQuote(scriptPath), "/dev/null")
 	cmd.Dir = t.Dir
-	cmd.Env = append(termEnv(os.Environ(), cfg.TTS.KeyEnv),
+	cmd.Env = append(termEnv(os.Environ(), keyEnvs),
 		"TERM=xterm-256color", "PAGER=cat", "GIT_PAGER=cat",
 		"COLUMNS="+strconv.Itoa(termCols))
 
@@ -161,13 +161,13 @@ func splitSession(out string, n int, mark markers) ([]termResult,
 	return results, nil
 }
 
-// termEnv is environ without the TTS key's variable (keyEnv): a scene
-// running `env` would draw a key the user's shell exports into the
-// video.
-func termEnv(environ []string, keyEnv string) []string {
+// termEnv is environ without the TTS key's variables (keyEnvs): a
+// scene running `env` would draw a key the user's shell exports into
+// the video.
+func termEnv(environ, keyEnvs []string) []string {
 	return slices.DeleteFunc(slices.Clone(environ), func(kv string) bool {
 		name, _, _ := strings.Cut(kv, "=")
-		return keyEnv != "" && name == keyEnv
+		return slices.Contains(keyEnvs, name)
 	})
 }
 

@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -334,11 +333,7 @@ func logTail(path string, n int) string {
 		return err.Error()
 	}
 
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
+	return tail(string(data), n)
 }
 
 // ===== Helpers =====

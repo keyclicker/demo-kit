@@ -53,8 +53,8 @@ func TestSameOrigin(t *testing.T) {
 	}
 }
 
-// Only loopback names and deskview.hosts are answered, whatever a
-// request's headers claim
+// Only localhost, addresses and deskview.hosts are answered, whatever
+// a request's headers claim
 func TestKnownHosts(t *testing.T) {
 	defer func(hosts []string) { cfg.Deskview.Hosts = hosts }(
 		cfg.Deskview.Hosts)
@@ -68,8 +68,9 @@ func TestKnownHosts(t *testing.T) {
 		"127.0.0.1:8737": 200, "localhost:8737": 200, "[::1]:8737": 200,
 		"localhost": 200, "box.tailnet.ts.net": 200,
 		"BOX.tailnet.ts.net.:443": 200,
-		"evil.example:8737":       403, "127.0.0.2:8737": 403, "": 403,
-		"box.tailnet.ts.net.evil.example": 403,
+		"192.0.2.7:8737":          200, "[2001:db8::7]:8737": 200,
+		"evil.example:8737": 403, "": 403, "box": 403,
+		"box.tailnet.ts.net.evil.example": 403, "127.0.0.1.evil.example": 403,
 	} {
 		r := httptest.NewRequest("GET", "/api/desktops", nil)
 		r.Host = host

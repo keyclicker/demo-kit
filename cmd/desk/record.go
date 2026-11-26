@@ -173,8 +173,7 @@ func joinSegments(path string, parts []string) error {
 	list.WriteString(concatList(parts))
 	list.Close()
 
-	tmp := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+
-		".joining")
+	tmp := joinTemp(path)
 	defer os.Remove(tmp)
 
 	join := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
@@ -194,6 +193,12 @@ func joinSegments(path string, parts []string) error {
 	return nil
 }
 
+// joinTemp names the hidden file a video at path is joined into.
+func joinTemp(path string) string {
+	return filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+
+		".joining")
+}
+
 // checkVideo reads every packet of the video at path, without decoding.
 // A probe isn't enough: a part cut short after +faststart moved its
 // index up front still probes fine.
@@ -202,16 +207,10 @@ func checkVideo(path string) error {
 		"-xerror", "-i", path, "-map", "0", "-c", "copy", "-f", "null", "-")
 	if out, err := read.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s is broken: %v: %s", path, err,
-			lastLine(string(out)))
+			tail(string(out), 1))
 	}
 
 	return nil
-}
-
-// lastLine is s's last non-empty line: ffmpeg's last word on an error.
-func lastLine(s string) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	return lines[len(lines)-1]
 }
 
 // concatList renders an ffmpeg concat demuxer script for files.

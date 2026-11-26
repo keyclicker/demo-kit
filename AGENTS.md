@@ -110,8 +110,9 @@ the finished videos: path, plus a link when `publish.url` is set);
     first (`checkVideo`; the concat demuxer skips a broken part and
     exits 0, and a probe passes one cut short after `+faststart`),
     `-xerror`, into a hidden `.NAME.joining` renamed on success. So the
-    video existing means it's whole; parts go only after. A segment
-    ffmpeg won't finalize in 20 s is killed, logged
+    video existing means it's whole; parts go only after, and
+    `stop`/`rm` remove the half a recorder killed mid-join left. A
+    segment ffmpeg won't finalize in 20 s is killed, logged
   - State: `stateDir/.rec-N` (owner, video, `recording|paused`),
     written by the recorder only; stops when its owner exits
   - `pause`/`resume`/`stop` need the recording's owner, or `--force`
@@ -202,9 +203,10 @@ as the proxy strips the prefix and both forms arrive as `/`.
 - 🖱 control / 👁 view only: the shown screen's `rfb.viewOnly`, live.
   Agent tabs: disabled
 - Hosts (`hosts.go`, `knownHosts`, every route): only a Host of
-  `localhost`, `127.0.0.1`, `[::1]` (any port) or a `deskview.hosts`
-  name, else 403 naming the key: a site rebinding its name to loopback
-  is same-origin by construction. `tailscale serve` passes the incoming
+  `localhost`, an IP address (any port) or a `deskview.hosts` name,
+  else 403 naming the key: a site rebinding its name to loopback is
+  same-origin by construction, and an address is no name to rebind.
+  `tailscale serve` passes the incoming
   Host on (plus it as `X-Forwarded-Host`), so its public name goes in
   `deskview.hosts`. A request header never makes a host known
 - `/vnc/{token}`: WebSocket ↔ VNC TCP (`coder/websocket` `NetConn`),
@@ -446,8 +448,9 @@ change to the tool and the skill by that.
   - Key: the variable `tts.key_env` names (`OPENROUTER_API_KEY`), from
     the environment or the `.env` beside the config (`cfg.Secret`);
     `""` sends none. A build asks (`ready`) only when a line isn't cached.
-    Term scenes run without that variable (`termEnv`): `env` in one
-    would draw the key into a shared video
+    Term scenes run without that variable, the file's and a flag's
+    (`keyEnvs`, `termEnv`): `env` in one would draw the key into a
+    shared video
   - Cost: OpenRouter's `GET /generation?id=<X-Generation-Id>`, only
     when a response carries that header (else unpriced); 404 until
     priced, any other error ends it. Priced a few seconds late, so a
