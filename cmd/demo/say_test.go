@@ -118,7 +118,7 @@ func TestTTSFlags(t *testing.T) {
 		t.Errorf("voice %+v, want %+v", defaultVoice, want)
 	}
 
-	engine := newEngine(cfg.TTS)
+	engine := newEngine(cfg)
 	if got := engine.name(); got != "openai http://127.0.0.1:8880/v1" {
 		t.Errorf("engine %q", got)
 	}

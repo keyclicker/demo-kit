@@ -21,33 +21,51 @@ func EnvPath() (string, error) {
 	return filepath.Join(filepath.Dir(path), ".env"), nil
 }
 
-// loadEnv sets each KEY=VALUE of the .env file that the environment
-// doesn't set already: the real environment wins. Lines may start with
+// Secret returns the value of the secret variable name: the
+// environment's when it sets one, else that of .env beside the config
+// file. ok is false when neither does.
+//
+// .env's values never enter the process environment, so nothing a
+// command spawns sees them: a demo's term scene running `env` would
+// draw them into a shared video, and desk hands its environment to
+// Xvnc, the window manager, Chromium and ffmpeg.
+func (c Config) Secret(name string) (value string, ok bool) {
+	if value, ok := os.LookupEnv(name); ok {
+		return value, true
+	}
+
+	value, ok = c.secrets[name]
+	return value, ok
+}
+
+// readEnv reads the .env file's KEY=VALUEs. Lines may start with
 // "export "; values may be quoted; # starts a comment line. A missing
 // file is fine; one others can read is refused, as it holds secrets.
-func loadEnv() error {
+func readEnv() (map[string]string, error) {
 	path, err := EnvPath()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	f, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer f.Close()
 
 	info, err := f.Stat()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%s holds secrets but others can read it: "+
+		return nil, fmt.Errorf("%s holds secrets but others can read it: "+
 			"chmod 600 %s", path, path)
 	}
+
+	secrets := map[string]string{}
 
 	lines := bufio.NewScanner(f)
 	for n := 1; lines.Scan(); n++ {
@@ -59,15 +77,13 @@ func loadEnv() error {
 		key, value, ok := strings.Cut(strings.TrimPrefix(line, "export "), "=")
 		key = strings.TrimSpace(key)
 		if !ok || key == "" || strings.ContainsAny(key, " \t") {
-			return fmt.Errorf("%s:%d: want KEY=VALUE", path, n)
+			return nil, fmt.Errorf("%s:%d: want KEY=VALUE", path, n)
 		}
 
-		if _, set := os.LookupEnv(key); !set {
-			os.Setenv(key, unquote(strings.TrimSpace(value)))
-		}
+		secrets[key] = unquote(strings.TrimSpace(value))
 	}
 
-	return lines.Err()
+	return secrets, lines.Err()
 }
 
 // unquote strips one pair of matching quotes around a value.

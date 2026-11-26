@@ -55,12 +55,15 @@ type speech struct {
 	GenID string // for ttsPricer; "" when there's none
 }
 
-// newEngine returns the engine config tts describes. Its key is read
-// now but needed only to synthesize: a cached build works without one.
-func newEngine(t config.TTS) ttsEngine {
+// newEngine returns the engine c.TTS describes. Its key is read now
+// (c.Secret) but needed only to synthesize: a cached build works
+// without one.
+func newEngine(c config.Config) ttsEngine {
+	t := c.TTS
 	e := &openaiTTS{base: strings.TrimSuffix(t.URL, "/"), keyEnv: t.KeyEnv}
 	if t.KeyEnv != "" {
-		e.key = strings.TrimSpace(os.Getenv(t.KeyEnv))
+		key, _ := c.Secret(t.KeyEnv)
+		e.key = strings.TrimSpace(key)
 	}
 	return e
 }

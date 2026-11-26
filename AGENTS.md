@@ -10,7 +10,9 @@ How the pieces work and why, for whoever changes them. Users read
   config file), `paths` (XDG dirs), `encode` (H.264 choice)
 - A new setting: field + doc in `internal/config` (schema, default,
   `resolve` check), the README's key table. Every binary has
-  `<bin> config [KEY]`. Secrets only via env / `.env`, never config
+  `<bin> config [KEY]`. Secrets only via env / `.env`, never config,
+  and read only through `Config.Secret` (env first, then `.env`):
+  `.env` is never exported, so nothing spawned sees it
 - Nothing machine-specific in code, docs or commits: no host names,
   user names, home paths or tailnet names. Machine choices go in the
   user's config
@@ -428,8 +430,10 @@ change to the tool and the skill by that.
     `checkVoice` (the API's answer: a bare 400). Other models' names
     pass through (Kokoro `am_michael`, Grok `Rex`, ElevenLabs `Liam`)
   - Key: the variable `tts.key_env` names (`OPENROUTER_API_KEY`), from
-    the environment or the `.env` beside the config (`config.Load`);
-    `""` sends none. A build asks (`ready`) only when a line isn't cached
+    the environment or the `.env` beside the config (`cfg.Secret`);
+    `""` sends none. A build asks (`ready`) only when a line isn't cached.
+    Term scenes run without that variable (`termEnv`): `env` in one
+    would draw the key into a shared video
   - Cost: OpenRouter's `GET /generation?id=<X-Generation-Id>`, only
     when a response carries that header (else unpriced); 404 until
     priced, any other error ends it. Priced a few seconds

@@ -201,7 +201,7 @@ func cmdSay(args []string) error {
 
 	ctx, stop := signalContext()
 	defer stop()
-	engine := newEngine(cfg.TTS)
+	engine := newEngine(cfg)
 
 	sp, err := speak(ctx, engine, defaultVoice, text)
 	if err != nil {

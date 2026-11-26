@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -116,8 +117,9 @@ func runTerm(ctx context.Context, t TermSpec, scriptPath string) (
 		"never", "--command", "bash --noprofile --norc "+
 			shellQuote(scriptPath), "/dev/null")
 	cmd.Dir = t.Dir
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "PAGER=cat",
-		"GIT_PAGER=cat", "COLUMNS="+strconv.Itoa(termCols))
+	cmd.Env = append(termEnv(os.Environ(), cfg.TTS.KeyEnv),
+		"TERM=xterm-256color", "PAGER=cat", "GIT_PAGER=cat",
+		"COLUMNS="+strconv.Itoa(termCols))
 
 	// Its own process group, killed whole: script, and with its pty
 	// gone, the session's bash and commands (they get SIGHUP)
@@ -157,6 +159,16 @@ func splitSession(out string, n int, mark markers) ([]termResult,
 		results = append(results, termResult{body, code})
 	}
 	return results, nil
+}
+
+// termEnv is environ without the TTS key's variable (keyEnv): a scene
+// running `env` would draw a key the user's shell exports into the
+// video.
+func termEnv(environ []string, keyEnv string) []string {
+	return slices.DeleteFunc(slices.Clone(environ), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return keyEnv != "" && name == keyEnv
+	})
 }
 
 // shellQuote quotes s for sh.

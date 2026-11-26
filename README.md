@@ -154,7 +154,9 @@ demo build --tts-url https://openrouter.ai/api/v1 \
 
 Secrets never go in the config: they come from the environment, or from
 `~/.config/demo-kit/.env` beside it (`KEY=VALUE` lines, `chmod 600`;
-the environment wins).
+the environment wins). `.env` values stay inside demo-kit: they never
+reach the programs it runs, and term scenes run without the TTS key's
+variable even when your shell exports it.
 
 ## Reaching deskview from elsewhere
 

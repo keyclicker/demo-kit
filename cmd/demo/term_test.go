@@ -74,3 +74,18 @@ func TestParseANSIEscapes(t *testing.T) {
 		}
 	}
 }
+
+// A term scene never sees the TTS key, exported or not
+func TestTermEnv(t *testing.T) {
+	got := termEnv([]string{"HOME=/h", "OPENROUTER_API_KEY=sk-1",
+		"OPENROUTER_API_KEY_X=2"}, "OPENROUTER_API_KEY")
+	want := []string{"HOME=/h", "OPENROUTER_API_KEY_X=2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("termEnv = %q; want %q", got, want)
+	}
+
+	if got := termEnv([]string{"A=1"}, ""); !slices.Equal(got,
+		[]string{"A=1"}) {
+		t.Errorf("no key_env: %q", got)
+	}
+}

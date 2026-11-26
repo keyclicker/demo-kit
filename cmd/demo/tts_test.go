@@ -141,7 +141,7 @@ func TestEngineKeys(t *testing.T) {
 		}))
 	defer srv.Close()
 
-	local := newEngine(config.TTS{URL: srv.URL + "/v1/"})
+	local := newEngine(config.Config{TTS: config.TTS{URL: srv.URL + "/v1/"}})
 	if err := local.ready(); err != nil {
 		t.Fatalf("keyless not ready: %v", err)
 	}
@@ -157,14 +157,16 @@ func TestEngineKeys(t *testing.T) {
 	}
 
 	t.Setenv("TEST_TTS_KEY", " sk-1\n")
-	keyed := newEngine(config.TTS{URL: srv.URL, KeyEnv: "TEST_TTS_KEY"})
+	keyed := newEngine(config.Config{TTS: config.TTS{URL: srv.URL,
+		KeyEnv: "TEST_TTS_KEY"}})
 	if _, err := keyed.synthesize(context.Background(),
 		Voice{Model: "m"}, "hi"); err != nil || auth[1] != "Bearer sk-1" {
 		t.Fatalf("keyed: %v, auth %q", err, auth)
 	}
 
 	t.Setenv("TEST_TTS_KEY", "")
-	keyed = newEngine(config.TTS{URL: srv.URL, KeyEnv: "TEST_TTS_KEY"})
+	keyed = newEngine(config.Config{TTS: config.TTS{URL: srv.URL,
+		KeyEnv: "TEST_TTS_KEY"}})
 	if err := keyed.ready(); err == nil ||
 		!strings.Contains(err.Error(), "TEST_TTS_KEY") {
 		t.Fatalf("keyed without key: %v", err)

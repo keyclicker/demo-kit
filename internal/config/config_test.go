@@ -178,23 +178,41 @@ func TestCmd(t *testing.T) {
 
 func TestLoadEnv(t *testing.T) {
 	path := filepath.Join(filepath.Dir(isolate(t)), ".env")
-	write(t, path, "# secrets\nexport DK_A=\"one\"\nDK_B=two\nDK_SET=file\n")
+	write(t, path, "# secrets\nexport DK_A=\"sk-a\"\nDK_B=sk-b\nDK_SET=file\n")
 	os.Chmod(path, 0o600)
 	t.Setenv("DK_SET", "env")
-	t.Setenv("DK_A", "")
-	os.Unsetenv("DK_A")
-	t.Setenv("DK_B", "")
-	os.Unsetenv("DK_B")
+	for _, key := range []string{"DK_A", "DK_B", "DK_NONE"} {
+		t.Setenv(key, "")
+		os.Unsetenv(key)
+	}
 
-	if _, err := Load(); err != nil {
+	c, err := Load()
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	for key, want := range map[string]string{"DK_A": "one", "DK_B": "two",
+	// The real environment wins
+	for key, want := range map[string]string{"DK_A": "sk-a", "DK_B": "sk-b",
 		"DK_SET": "env"} {
-		if got := os.Getenv(key); got != want {
-			t.Errorf("%s = %q, want %q", key, got, want)
+		if got, ok := c.Secret(key); !ok || got != want {
+			t.Errorf("Secret(%s) = %q, %v; want %q", key, got, ok, want)
 		}
+	}
+	if got, ok := c.Secret("DK_NONE"); ok {
+		t.Errorf("Secret(DK_NONE) = %q; want none", got)
+	}
+
+	// .env stays out of the environment, and out of `config`
+	if v, set := os.LookupEnv("DK_A"); set {
+		t.Errorf("DK_A exported: %q", v)
+	}
+
+	var out strings.Builder
+	if err := Cmd("demo", c, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "sk-") {
+		t.Errorf("config printed a secret:\n%s", out.String())
 	}
 }
 

@@ -674,7 +674,7 @@ func (b *builder) speak(ctx context.Context) error {
 
 	// Ready only when a line has to be bought: a cached build works
 	// without a key
-	b.tts = newEngine(cfg.TTS)
+	b.tts = newEngine(cfg)
 	if uncached(b.tts, scenes) {
 		if err := b.tts.ready(); err != nil {
 			return err

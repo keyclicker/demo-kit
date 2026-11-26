@@ -46,7 +46,9 @@
 //	url = ""                                    # base URL; "" = no links
 //
 // Secrets never live here: they come from the environment, or from
-// .env beside this file (KEY=VALUE, chmod 600), which Load reads first.
+// .env beside this file (KEY=VALUE, chmod 600), which Load reads into
+// the Config, never into the environment: Config.Secret is the one way
+// to read one.
 package config
 
 import (
@@ -79,6 +81,10 @@ type Config struct {
 	TTS      TTS      `toml:"tts"`
 	Deskview Deskview `toml:"deskview"`
 	Publish  Publish  `toml:"publish"`
+
+	// secrets are .env's KEY=VALUEs, read by Secret. Unexported: never
+	// printed by `config`, never put into the process environment.
+	secrets map[string]string
 }
 
 // Desk configures desk's displays.
@@ -235,11 +241,12 @@ func Path() (string, error) {
 	return filepath.Join(dir, "config.toml"), nil
 }
 
-// Load reads the config file over the defaults, after putting .env into
-// the environment. A missing file is not an error; a malformed one, an
+// Load reads the config file over the defaults, and .env's secrets
+// (for Secret). A missing file is not an error; a malformed one, an
 // unknown key or a relative path is.
 func Load() (Config, error) {
-	if err := loadEnv(); err != nil {
+	secrets, err := readEnv()
+	if err != nil {
 		return Config{}, err
 	}
 
@@ -252,6 +259,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	c.secrets = secrets
 
 	meta, err := toml.DecodeFile(path, &c)
 	if errors.Is(err, fs.ErrNotExist) {
