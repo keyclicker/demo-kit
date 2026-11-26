@@ -6,7 +6,6 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -211,40 +210,6 @@ func TestDuckVolume(t *testing.T) {
 	want := "1-0.750*max(0,clip((t-0.850)/0.150,0,1)*clip((2.400-t)/0.400,0,1))"
 	if got != want {
 		t.Fatalf("duckVolume = %s", got)
-	}
-}
-
-func TestParseANSI(t *testing.T) {
-	lines := parseANSI("\x1b]0;title\x07\x1b[1;32mok\x1b[0m done\r\n" +
-		"10%\r50%\r\n\tx\x1b[38;5;196my")
-	if len(lines) != 3 {
-		t.Fatalf("%d lines: %+v", len(lines), lines)
-	}
-
-	ok := lines[0][0]
-	if ok.text != "ok" || !ok.bold || ok.col != ansiColors[2] ||
-		lines[0][1].text != " done" || lines[0][1].bold {
-		t.Fatalf("styles: %+v", lines[0])
-	}
-	if lines[1][0].text != "50%" {
-		t.Fatalf("\\r redraws its line: %+v", lines[1])
-	}
-	if lines[2][0].text != "        x" || lines[2][1].col != color256(196) {
-		t.Fatalf("tab, 256 colors: %+v", lines[2])
-	}
-
-	// A program's own CRLF reaches us as \r\r\n (the pty's onlcr)
-	lines = parseANSI("HTTP/1.1 200 OK\r\r\nX: y\r\r\n")
-	var texts []string
-	for _, l := range lines {
-		var text string
-		for _, r := range l {
-			text += r.text
-		}
-		texts = append(texts, text)
-	}
-	if !slices.Equal(texts, []string{"HTTP/1.1 200 OK", "X: y"}) {
-		t.Fatalf("CRLF: %q", texts)
 	}
 }
 

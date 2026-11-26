@@ -309,7 +309,9 @@ change to the tool and the skill by that.
   - `term` (`term.go`): commands run once in one bash on a pty
     (`script(1)`, `stty` 102 cols, stdin closed, pagers off), split by
     random per-run markers; output's SGR colors kept (`parseANSI`),
-    CRLF a newline, the rest dropped. Scenes' sessions run in script
+    CRLF a newline, a lone `\r` or `ESC[G` starts the line over, the
+    rest dropped, each escape whole per ECMA-48 (`escape`: `ESC ( B`
+    in `sgr0`, DCS strings). Scenes' sessions run in script
     order, before any scene is drawn (`runSessions`). Then drawn:
     prompt as the demo zsh's, typing at 30 cps (capped to 40% of its
     step), output at once. One step per command, or one `say` for all.
