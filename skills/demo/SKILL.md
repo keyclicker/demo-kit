@@ -100,7 +100,8 @@ demo code --tree --depth 2 desk      # a file tree, numbered for focus
 
 Speech: `demo say "a line"` plays it (`--voice NAME` to try one).
 Voices: `demo voices` lists the names Gemini takes, with their style;
-the default is Umbriel. A second speaker or a quote: a scene's
+the default is Umbriel. Another engine (`demo config tts.model`, not
+Gemini) takes its own names. A second speaker or a quote: a scene's
 `"voice": {"name": "Charon"}`. The voice takes direction:
 `instructions` is plain English (pace, mood, role), and Gemini acts
 on it. A scene's `voice` changes only the

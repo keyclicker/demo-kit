@@ -26,8 +26,15 @@
 //	[demo]
 //	dir = "~/.local/share/demo-kit/demos"       # demo workspaces
 //	scratch = "~/.cache/demo-kit/scratch"       # previews, contact sheets
-//	voice = "Umbriel"                           # default voice
 //	sink = ""                                   # demo say's output; "" = default
+//
+//	[tts]                                       # narration's speech engine
+//	url = "https://openrouter.ai/api/v1"        # OpenAI-compatible API base
+//	key_env = "OPENROUTER_API_KEY"              # env var of its key; "" = none
+//	model = "google/gemini-3.8-flash-tts"
+//	voice = "Umbriel"                           # "" = the model's default
+//	instructions = "Adult male voice. ..."      # delivery; "" = none
+//	tempo = 1.2                                 # speed-up, pitch kept
 //
 //	[deskview]
 //	addr = "127.0.0.1:8737"                     # listen address
@@ -69,6 +76,7 @@ type Config struct {
 	Browser  Browser  `toml:"browser"`
 	Record   Record   `toml:"record"`
 	Demo     Demo     `toml:"demo"`
+	TTS      TTS      `toml:"tts"`
 	Deskview Deskview `toml:"deskview"`
 	Publish  Publish  `toml:"publish"`
 }
@@ -134,12 +142,50 @@ type Demo struct {
 	// sheets.
 	Scratch string `toml:"scratch"`
 
-	// Voice is the voice name scenes use unless they pick another.
-	Voice string `toml:"voice"`
-
 	// Sink is the PipeWire sink `demo say` plays on; "" is the default
 	// output.
 	Sink string `toml:"sink"`
+}
+
+// TTS configures the speech engine narration uses: any server with an
+// OpenAI-compatible POST /audio/speech, hosted (OpenRouter, OpenAI) or
+// local (Kokoro-FastAPI, Speaches, LocalAI). Model through tempo are the
+// voice scripts start from; a script's or scene's voice overrides them.
+type TTS struct {
+	// URL is the API base; requests go to URL + "/audio/speech".
+	URL string `toml:"url"`
+
+	// KeyEnv names the environment variable holding the API key; ""
+	// sends none, as local servers want.
+	KeyEnv string `toml:"key_env"`
+
+	// Model is the TTS model, as the server names it.
+	Model string `toml:"model"`
+
+	// Voice is the model's voice name; "" is the model's default.
+	Voice string `toml:"voice"`
+
+	// Instructions direct delivery (Gemini, OpenAI); "" sends none.
+	Instructions string `toml:"instructions"`
+
+	// Tempo speeds speech up, pitch kept (ffmpeg atempo), MinTempo to
+	// MaxTempo.
+	Tempo float64 `toml:"tempo"`
+}
+
+// MinTempo and MaxTempo bound a voice's tempo, here and in scripts:
+// slower drags, faster garbles.
+const (
+	MinTempo = 0.5
+	MaxTempo = 4.0
+)
+
+// CheckTempo rejects a tempo outside MinTempo-MaxTempo.
+func CheckTempo(tempo float64) error {
+	if tempo < MinTempo || tempo > MaxTempo {
+		return fmt.Errorf("tempo %g: want %g-%g", tempo, MinTempo, MaxTempo)
+	}
+	return nil
 }
 
 // Deskview configures the viewer: one web page with every display.
@@ -167,9 +213,14 @@ type Publish struct {
 	URL string `toml:"url"`
 }
 
+// movedKeys maps renamed keys to their new names, so the unknown-key
+// error says where an old config's key went.
+var movedKeys = map[string]string{"demo.voice": "tts.voice"}
+
 var (
 	sizeRE    = regexp.MustCompile(`^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$`)
 	displayRE = regexp.MustCompile(`^:[0-9]+$`)
+	envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 // ===== Loading =====
@@ -214,6 +265,9 @@ func Load() (Config, error) {
 		keys := make([]string, len(extra))
 		for i, k := range extra {
 			keys[i] = k.String()
+			if to, ok := movedKeys[keys[i]]; ok {
+				keys[i] += " (now " + to + ")"
+			}
 		}
 		return Config{}, fmt.Errorf("%s: unknown keys: %s", path,
 			strings.Join(keys, ", "))
@@ -258,7 +312,19 @@ func Defaults() (Config, error) {
 		Demo: Demo{
 			Dir:     filepath.Join(data, "demos"),
 			Scratch: filepath.Join(cache, "scratch"),
-			Voice:   "Umbriel",
+		},
+
+		// Gemini Flash, voice Umbriel (Puck the second choice). Flash,
+		// never lite: lite is cheaper, but these demos are listened to
+		TTS: TTS{
+			URL:    "https://openrouter.ai/api/v1",
+			KeyEnv: "OPENROUTER_API_KEY",
+			Model:  "google/gemini-3.8-flash-tts",
+			Voice:  "Umbriel",
+			Instructions: "Adult male voice. Fast, energetic pacing, " +
+				"like a podcast host. Casual, dry-humored. Not " +
+				"whispery, not intimate.",
+			Tempo: 1.2,
 		},
 		Deskview: Deskview{Addr: "127.0.0.1:8737", Audio: true},
 		Publish:  Publish{Root: data},
@@ -325,12 +391,40 @@ func (c *Config) resolve() error {
 		return fmt.Errorf("deskview.addr: %q: want host:port", c.Deskview.Addr)
 	}
 
+	if err := c.TTS.check(); err != nil {
+		return err
+	}
+
 	if c.Publish.URL != "" {
 		u, err := url.Parse(c.Publish.URL)
 		if err != nil || u.Scheme == "" || u.Host == "" {
 			return fmt.Errorf("publish.url: %q is not an absolute URL",
 				c.Publish.URL)
 		}
+	}
+
+	return nil
+}
+
+// check validates the speech engine's keys.
+func (t TTS) check() error {
+	u, err := url.Parse(t.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") ||
+		u.Host == "" {
+		return fmt.Errorf("tts.url: %q: want an http(s) URL", t.URL)
+	}
+
+	if t.KeyEnv != "" && !envNameRE.MatchString(t.KeyEnv) {
+		return fmt.Errorf("tts.key_env: %q: want a variable name, or \"\"",
+			t.KeyEnv)
+	}
+
+	if t.Model == "" {
+		return errors.New("tts.model: needs a model")
+	}
+
+	if err := CheckTempo(t.Tempo); err != nil {
+		return fmt.Errorf("tts.%w", err)
 	}
 
 	return nil

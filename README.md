@@ -68,7 +68,8 @@ tab.
 A narrated video:
 
 ```sh
-# speech: Gemini TTS via OpenRouter; the key once, readable only by you
+# speech: Gemini TTS via OpenRouter (or any OpenAI-compatible server:
+# [tts] below); the key once, readable only by you
 (umask 077; echo 'OPENROUTER_API_KEY=sk-or-...' >> ~/.config/demo-kit/.env)
 demo build path/to/demo.json       # writes demo.mp4 beside the script
 demo frames path/to/demo.mp4       # contact sheet, to check it
@@ -106,8 +107,15 @@ audio = true                        # sound too: needs PipeWire with
 [demo]
 dir = "~/.local/share/demo-kit/demos"   # demo workspaces
 scratch = "~/.cache/demo-kit/scratch"   # previews, contact sheets
-voice = "Umbriel"                       # demo voices lists them
 sink = ""                               # demo say's output; "" = default
+
+[tts]                               # narration: OpenAI-compatible speech
+url = "https://openrouter.ai/api/v1"    # POST {url}/audio/speech
+key_env = "OPENROUTER_API_KEY"          # env var of its key; "" = none
+model = "google/gemini-3.8-flash-tts"
+voice = "Umbriel"                       # demo voices lists Gemini's
+instructions = "Adult male voice. ..."  # delivery direction; "" = none
+tempo = 1.2                             # speed-up, pitch kept (0.5-4)
 
 [deskview]
 addr = "127.0.0.1:8737"
@@ -117,6 +125,17 @@ audio_sink = ""                     # "" = the default output
 [publish]
 root = "~/.local/share/demo-kit"    # deskview serves it at /files/
 url = ""                            # its public URL: links in output
+```
+
+A local server instead (Kokoro-FastAPI here), no key:
+
+```toml
+[tts]
+url = "http://127.0.0.1:8880/v1"
+key_env = ""
+model = "kokoro"
+voice = "am_michael"
+instructions = ""
 ```
 
 Secrets never go in the config: they come from the environment, or from

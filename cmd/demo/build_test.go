@@ -169,16 +169,17 @@ func TestUncached(t *testing.T) {
 	v := defaultVoice
 	scenes := []Scene{{Say: "cached", Voice: &v}, {Secs: 1, Voice: &v}}
 
-	wav, err := cachePath(v, "cached")
+	tts := testEngine("http://127.0.0.1:1")
+	wav, err := cachePath(tts, v, "cached")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !uncached(scenes) {
+	if !uncached(tts, scenes) {
 		t.Fatal("missing line: cached")
 	}
 
 	os.WriteFile(wav, nil, 0o644)
-	if uncached(scenes) {
+	if uncached(tts, scenes) {
 		t.Fatal("cached line: needs the key")
 	}
 }

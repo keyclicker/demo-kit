@@ -11,7 +11,7 @@ import (
 )
 
 // EnvPath returns the .env file beside config.toml, for secrets such as
-// OPENROUTER_API_KEY.
+// the TTS key (tts.key_env).
 func EnvPath() (string, error) {
 	path, err := Path()
 	if err != nil {
