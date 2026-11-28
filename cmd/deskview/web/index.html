@@ -250,12 +250,15 @@
         return changed;
       }
 
-      // Show the desktop named by the hash, else the first one.
+      // Show the desktop named by the hash, else the first one, and
+      // make the hash name it: display numbers are reused, so one left
+      // on a desktop that's gone would jump to the next given its number.
       function show() {
         if (desks.size === 0) return;
 
         const wanted = location.hash.slice(1);
         const name = desks.has(wanted) ? wanted : desks.keys().next().value;
+        if (name !== wanted) history.replaceState(null, "", "#" + name);
 
         for (const [token, { tab, screen }] of desks) {
           screen.hidden = token !== name;
