@@ -40,14 +40,21 @@ func TestConcatList(t *testing.T) {
 	}
 }
 
-// part makes a 1 s test video at dir/name; broken cuts it short.
-func part(t *testing.T, dir, name string, broken bool) string {
+// part makes a 1 s test video at dir/name, with sound as long as its
+// picture if sound is set; broken cuts it short.
+func part(t *testing.T, dir, name string, sound, broken bool) string {
 	t.Helper()
 
 	path := filepath.Join(dir, name)
-	out, err := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
-		"-f", "lavfi", "-i", "testsrc=size=160x120:rate=30:duration=1",
-		"-c:v", "libx264", "-movflags", "+faststart", path).CombinedOutput()
+	args := []string{"-nostdin", "-loglevel", "error",
+		"-f", "lavfi", "-i", "testsrc=size=160x120:rate=30:duration=1"}
+	if sound {
+		args = append(args, "-f", "lavfi", "-i",
+			"sine=frequency=440:sample_rate=48000:duration=1", "-c:a", "aac")
+	}
+	args = append(args, "-c:v", "libx264", "-movflags", "+faststart", path)
+
+	out, err := exec.Command("ffmpeg", args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("ffmpeg: %v: %s", err, out)
 	}
@@ -70,13 +77,16 @@ func TestJoinSegments(t *testing.T) {
 
 	for _, tc := range []struct {
 		name   string
+		sound  bool
 		broken []bool
 		ok     bool
 	}{
-		{"whole", []bool{false, false, false}, true},
-		{"one", []bool{false}, true},
-		{"broken middle", []bool{false, true, false}, false},
-		{"broken alone", []bool{true}, false},
+		{"whole", false, []bool{false, false, false}, true},
+		{"whole, sound", true, []bool{false, false, false}, true},
+		{"one", false, []bool{false}, true},
+		{"broken middle", false, []bool{false, true, false}, false},
+		{"broken middle, sound", true, []bool{false, true, false}, false},
+		{"broken alone", false, []bool{true}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -85,7 +95,7 @@ func TestJoinSegments(t *testing.T) {
 			var parts []string
 			for k, broken := range tc.broken {
 				parts = append(parts, part(t, dir, filepath.Base(
-					partPath(video, k+1)), broken))
+					partPath(video, k+1)), tc.sound, broken))
 			}
 
 			err := joinSegments(video, parts)

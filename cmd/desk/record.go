@@ -176,8 +176,11 @@ func joinSegments(path string, parts []string) error {
 	tmp := joinTemp(path)
 	defer os.Remove(tmp)
 
+	// No -xerror: a part whose sound ends with or after its picture
+	// overlaps the next by under an AAC frame, which ffmpeg fixes up
+	// (non-monotonic DTS) unless told that every error is fatal
 	join := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
-		"-xerror", "-y", "-f", "concat", "-safe", "0", "-i", list.Name(),
+		"-y", "-f", "concat", "-safe", "0", "-i", list.Name(),
 		"-c", "copy", "-movflags", "+faststart", "-f", "mp4", tmp)
 	if out, err := join.CombinedOutput(); err != nil {
 		return fmt.Errorf("join %d segments: %v: %s", len(parts), err, out)
