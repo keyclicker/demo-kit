@@ -109,7 +109,9 @@ the finished videos: path, plus a link when `publish.url` is set);
   - Join (`joinSegments`), all or nothing: every part's packets read
     first (`checkVideo`; the concat demuxer skips a broken part and
     exits 0, and a probe passes one cut short after `+faststart`),
-    `-xerror`, into a hidden `.NAME.joining` renamed on success. So the
+    into a hidden `.NAME.joining` renamed on success. No `-xerror` on
+    the join itself: parts with sound overlap by under an AAC frame,
+    which ffmpeg fixes up unless every error is fatal. So the
     video existing means it's whole; parts go only after, and
     `stop`/`rm` remove the half a recorder killed mid-join left. A
     segment ffmpeg won't finalize in 20 s is killed, logged
@@ -208,10 +210,12 @@ as the proxy strips the prefix and both forms arrive as `/`.
   same-origin by construction, and an address is no name to rebind.
   `tailscale serve` passes the incoming
   Host on (plus it as `X-Forwarded-Host`), so its public name goes in
-  `deskview.hosts`. A request header never makes a host known
+  `deskview.hosts`. Every `X-Forwarded-Host` name must be known too
+  (`requestHosts`): a proxy that rewrites Host carries the public
+  name only there. That header only refuses, never makes a host known
 - `/vnc/{token}`: WebSocket ↔ VNC TCP (`coder/websocket` `NetConn`),
   only to displays `desk ls` lists, same origin only (`Origin` host =
-  `Host` or a set, known `X-Forwarded-Host`, exactly; a hostless
+  `Host` or a set `X-Forwarded-Host`, exactly; a hostless
   `Origin`, `null` or `file://`, is refused; none is not a browser),
   subprotocol `binary`
 - Sound: VNC carries none. `/audio/stream` = raw s16le 48 kHz stereo

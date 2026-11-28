@@ -210,11 +210,11 @@ type Deskview struct {
 	AudioSink string `toml:"audio_sink"`
 
 	// Hosts are the host names, besides loopback's (localhost,
-	// 127.0.0.1, ::1), that requests may name in Host: those of a
-	// proxy that passes its own on, as `tailscale serve` does (e.g.
-	// "box.tailnet.ts.net"). Any port; no scheme. Anything else is
-	// refused, so a site that rebinds its name to 127.0.0.1 can't read
-	// the page, the files or a display.
+	// 127.0.0.1, ::1), that requests may name in Host or
+	// X-Forwarded-Host: those of a proxy that passes its own on, as
+	// `tailscale serve` does (e.g. "box.tailnet.ts.net"). Any port; no
+	// scheme. Anything else is refused, so a site that rebinds its name
+	// to 127.0.0.1 can't read the page, the files or a display.
 	Hosts []string `toml:"hosts"`
 }
 

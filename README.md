@@ -177,18 +177,17 @@ page is relative, so a path prefix works.
 
 deskview answers only requests for `localhost` or an IP address (any
 port), so a web page that rebinds its own name to your loopback can't
-read it. A proxy that passes on the public name, as `tailscale serve`
-does, needs that name in `deskview.hosts`, else every request is a 403
-naming the setting. List each name you open it under (a tailnet's
-short name is another one):
+read it. A proxy that passes on the public name, in `Host` as
+`tailscale serve` does or in `X-Forwarded-Host`, needs that name in
+`deskview.hosts`, else every request is a 403 naming the setting. List
+each name you open it under (a tailnet's short name is another one):
 
 ```toml
 [deskview]
 hosts = ["box.tailnet-name.ts.net"]
 ```
 
-An SSH tunnel, or a proxy that sends `Host: 127.0.0.1:8737`, needs
-nothing. Then set `publish.url` to the
+An SSH tunnel needs nothing. Then set `publish.url` to the
 public URL of `/files/`, and `desk` and `demo` print links to their
 videos.
 

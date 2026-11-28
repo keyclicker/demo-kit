@@ -85,11 +85,11 @@ func (p vncProxy) vncAddr(ctx context.Context, token string) (string, bool) {
 
 // sameOrigin accepts a WebSocket from the page itself: the Origin host is
 // the request's host, or the host a proxy forwarded (X-Forwarded-Host),
-// as reverse proxies may rewrite Host, when that host is known too
-// (knownHost: a request header alone never makes one). No Origin is
-// not a browser, so no CSRF risk. An Origin with no host (`null` from
-// sandboxed iframes and data: pages, file://) is any page: refused.
-// Hosts compare exactly, port included.
+// as reverse proxies may rewrite Host. Both are names deskview answers
+// to: knownHosts refused the rest. No Origin is not a browser, so no
+// CSRF risk. An Origin with no host (`null` from sandboxed iframes and
+// data: pages, file://) is any page: refused. Hosts compare exactly,
+// port included.
 func sameOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -107,5 +107,5 @@ func sameOrigin(r *http.Request) bool {
 
 	// An absent header is "": never let it match
 	fwd := r.Header.Get("X-Forwarded-Host")
-	return fwd != "" && u.Host == fwd && knownHost(fwd)
+	return fwd != "" && u.Host == fwd
 }

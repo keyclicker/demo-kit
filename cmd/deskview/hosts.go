@@ -17,22 +17,47 @@ import (
 //
 // What `tailscale serve` passes on: the incoming Host as is, plus that
 // same name as X-Forwarded-Host. So proxied, Host is the public name,
-// which deskview.hosts lists. A request header (X-Forwarded-Host) is
-// never what makes a host known: a rebinding page's fetch can set it.
+// which deskview.hosts lists. A proxy that rewrites Host to its
+// upstream's (nginx's default) hides the name there and carries it in
+// X-Forwarded-Host alone, so those names must be known as well. That
+// header only ever refuses: it never makes a host known, as a rebinding
+// page's fetch can set it.
 
-// knownHosts answers only requests whose Host names deskview
-// (knownHost); anything else is a 403 naming the setting.
+// knownHosts answers only requests naming deskview (knownHost) in Host
+// and in every X-Forwarded-Host; anything else is a 403 naming the
+// setting.
 func knownHosts(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !knownHost(r.Host) {
+		for _, host := range requestHosts(r) {
+			if knownHost(host) {
+				continue
+			}
+
 			http.Error(w, fmt.Sprintf("deskview: unknown host %q: add it "+
-				"to deskview.hosts if it's a proxy's", r.Host),
+				"to deskview.hosts if it's a proxy's", host),
 				http.StatusForbidden)
 			return
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requestHosts lists the names a request says it is for: its Host, then
+// those in its X-Forwarded-Host headers (each proxy in a chain may add
+// one, comma-separated).
+func requestHosts(r *http.Request) []string {
+	hosts := []string{r.Host}
+
+	for _, value := range r.Header.Values("X-Forwarded-Host") {
+		for _, host := range strings.Split(value, ",") {
+			if host = strings.TrimSpace(host); host != "" {
+				hosts = append(hosts, host)
+			}
+		}
+	}
+
+	return hosts
 }
 
 // knownHost reports whether host (host or host:port) is localhost, an
