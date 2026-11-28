@@ -194,9 +194,12 @@ as the proxy strips the prefix and both forms arrive as `/`.
 - Page (`web/index.html`): polls `api/desktops` every 3 s: one tab and
   live screen per display with a `vnc` address, each noVNC's `RFB`
   (`scaleViewport`), reconnected 2 s after a drop. Tabs only toggle
-  visibility, so switching never reconnects. The host display opens
-  interactive; desk displays view-only. A host VNC's password is
-  `prompt`ed
+  visibility, so switching never reconnects. The shown one stays until
+  a click or its going (then: the first), and the hash always names it
+  (`show`, `history.replaceState`): display numbers are reused, so a
+  hash left on a gone `:20` would jump to the next agent's. The host
+  display opens interactive; desk displays view-only. A host VNC's
+  password is `prompt`ed
 - noVNC's client only: `core/` and `vendor/` (pako) in `web/novnc`,
   embedded; version in its `VERSION`. Its UI (`app/`, `vnc.html`)
   stays out: it hid our settings in its sidebar, and its 1.7.0 asks
