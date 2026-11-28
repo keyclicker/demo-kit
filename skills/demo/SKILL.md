@@ -89,6 +89,18 @@ DISPLAY=$D ZDOTDIR=$S/zsh setsid -f ghostty \
 No Ghostty: `DISPLAY=$D ZDOTDIR=$S/zsh setsid -f xterm -fa Monospace
 -fs 14`.
 
+Diagrams (an architecture, a flow, a before/after table) only when
+nothing real shows it: an `html` page in `artifacts/`, rendered
+headless, 1280 wide (a frame is 960 tall). Write plain HTML: built-in
+styles give it the video's look and a few blocks (`.card`, `.flow`
+with `.arrow`, `.grid`, `.center`); `demo html -h` lists them. Steps
+point with selectors (`"box": "#api"`) and build it up: an element
+with `data-from="2"` shows from step 2. Pages count as slides.
+
+```sh
+demo html --step 2 --box '#api' $W/artifacts/arch.html  # PNG, its #ids
+```
+
 Code is drawn, not filmed. Preview what a scene will show:
 
 ```sh
@@ -136,14 +148,17 @@ captions) and `--scene 3` preview into `demo.scratch`
     {"say": "...", "focus": [464, 466]}]},
   {"code": {"diff": ["origin/master...HEAD", "--", "desk/"],
             "hunks": [2]}, "say": "..."},
+  {"html": "artifacts/arch.html", "steps": [
+    {"say": "..."}, {"say": "...", "box": "#api"},
+    {"say": "...", "zoom": "#db"}]},
   {"slide": {"end": "Thanks", "lines": ["PR #12", "next: ..."]}, "say": "..."}
 ]}
 ```
 
 Every field, one line each: `demo build -h`. Narration sets each
 scene's length; steps point at the picture as they're said (a code
-focus, an image's box, a zoom on an image or a clip, a terminal's
-next command).
+focus, an image's or a page's box, a zoom on those or a clip, a
+terminal's next command).
 Recordings lose still edges and idle frames, then speed up to fit; a
 clip with nothing said plays its trimmed cut (`trim: false` keeps it
 whole). The build warns on dead air (still and silent 1.5 s+): fix

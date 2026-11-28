@@ -115,6 +115,7 @@ type Video struct {
 type Browser struct {
 	// Command launches the browser; desk adds the profile, the DevTools
 	// port and the display. E.g. ["flatpak", "run", "org.chromium.Chromium"].
+	// demo renders html scenes on it too, headless.
 	Command []string `toml:"command"`
 
 	// MainProfile is the user's own profile, for `--profile main`: their

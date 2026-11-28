@@ -7,7 +7,7 @@ narrated demo videos, and one web page to watch it all.
 | Tool       | What it does                                                    |
 | ---------- | --------------------------------------------------------------- |
 | `desk`     | GPU-accelerated X displays for agents, recorded to mp4; `desk browser` runs Chromium on them for [agent-browser](https://github.com/vercel-labs/agent-browser) |
-| `demo`     | narrated videos from a JSON script: recordings, terminals, drawn code and diffs, captions, chapters |
+| `demo`     | narrated videos from a JSON script: recordings, terminals, drawn code and diffs, HTML diagrams, captions, chapters |
 | `deskview` | a web page with a live tab per display, its sound, and your published files |
 | `skills/`  | agent skills (Claude Code, Codex) that teach agents to use all of the above |
 
@@ -96,7 +96,8 @@ render_node = "auto"                # GPU: "auto", a /dev/dri path, ""
 encoder = "auto"                    # VAAPI if it works, else x264
 
 [browser]
-command = ["chromium"]              # any Chromium; install.sh sets it
+command = ["chromium"]              # any Chromium; install.sh sets it;
+                                    # demo renders html scenes on it
 main_profile = "~/.config/chromium" # desk browser --profile main
 
 [record]

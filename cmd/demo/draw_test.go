@@ -137,11 +137,11 @@ func TestSpotlight(t *testing.T) {
 		return a, p.point(a)
 	}
 
-	a, v := point(Step{Box: []int{10, 10, 100, 50}})
+	a, v := point(Step{Box: &Region{Rect: []int{10, 10, 100, 50}}})
 	if v.img == p.canvas || v.y != 0 || a.view != fullFrame {
 		t.Fatalf("spotlight: y %d, view %+v", v.y, a.view)
 	}
-	if _, err := p.aim(Step{Box: []int{600, 0, 100, 50}}); err == nil {
+	if _, err := p.aim(Step{Box: &Region{Rect: []int{600, 0, 100, 50}}}); err == nil {
 		t.Fatal("box outside the image: accepted")
 	}
 
@@ -154,21 +154,22 @@ func TestSpotlight(t *testing.T) {
 	}
 
 	// A box at the edge keeps its whole outline, inside the picture
-	_, v = point(Step{Box: []int{0, 0, 100, 50}})
+	_, v = point(Step{Box: &Region{Rect: []int{0, 0, 100, 50}}})
 	if c := v.img.RGBAAt(0, 40); c != colFocus || v.img.RGBAAt(2, 40) !=
 		colFocus {
 		t.Fatalf("left outline at the edge: %v", c)
 	}
 
 	// A zoom alone: the picture plain, a small region up to maxZoom
-	a, v = point(Step{Zoom: []int{0, 0, 100, 50}})
+	a, v = point(Step{Zoom: &Region{Rect: []int{0, 0, 100, 50}}})
 	if v.img != p.canvas || a.view != (rect{0, 0, frameW / maxZoom,
 		frameH / maxZoom}) {
 		t.Fatalf("zoom alone: %+v", a.view)
 	}
 
 	// Both: the outline thinner by the zoom, so it's as thick on screen
-	_, v = point(Step{Box: []int{0, 0, 100, 50}, Zoom: []int{0, 0, 100, 50}})
+	r := &Region{Rect: []int{0, 0, 100, 50}}
+	_, v = point(Step{Box: r, Zoom: r})
 	if c := v.img.RGBAAt(1, 40); c == colFocus {
 		t.Fatal("outline not thinned for a 4x zoom")
 	}

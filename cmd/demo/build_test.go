@@ -91,7 +91,9 @@ func TestLoadScript(t *testing.T) {
 		{"clip": "a.mp4", "steps": [{"say": "g", "zoom": [1, 2, 3, 4]}]},
 		{"image": "i.png", "steps": [{"say": "h", "box": [1, 2, 3, 4],
 			"zoom": [0, 0, 9, 9]}]},
-		{"term": {"run": ["ls", "pwd"]}, "steps": [{"say": "e"}, {"say": "f"}]}]}`),
+		{"term": {"run": ["ls", "pwd"]}, "steps": [{"say": "e"}, {"say": "f"}]},
+		{"html": "p.html", "steps": [{"say": "i", "box": "#api .db",
+			"zoom": [0, 0, 9, 9]}]}]}`),
 		0o644)
 	if s, err = loadScript(path); err != nil {
 		t.Fatal(err)
@@ -109,6 +111,14 @@ func TestLoadScript(t *testing.T) {
 	if s.Scenes[2].decimate() {
 		t.Fatal("audio kept decimate on")
 	}
+	page := s.Scenes[7]
+	if page.HTML != filepath.Join(dir, "p.html") {
+		t.Fatalf("html not resolved: %s", page.HTML)
+	}
+	if st := page.Steps[0]; st.Box.Selector != "#api .db" ||
+		len(st.Zoom.Rect) != 4 {
+		t.Fatalf("regions: box %v, zoom %v", st.Box, st.Zoom)
+	}
 
 	bad := map[string]string{
 		"two sources": `{"scenes": [{"say": "x", "clip": "a", "image": "b"}]}`,
@@ -123,6 +133,10 @@ func TestLoadScript(t *testing.T) {
 		"two slides":  `{"scenes": [{"say": "x", "slide": {"title": "a", "end": "b"}}]}`,
 		"term zoom":   `{"scenes": [{"term": {"run": ["a"]}, "steps": [{"say": "y", "zoom": [0, 0, 5, 5]}]}]}`,
 		"clip box":    `{"scenes": [{"clip": "a", "steps": [{"say": "y", "box": [0, 0, 5, 5]}]}]}`,
+		"image sel":   `{"scenes": [{"image": "a", "steps": [{"say": "y", "box": "#x"}]}]}`,
+		"clip sel":    `{"scenes": [{"clip": "a", "steps": [{"say": "y", "zoom": "#x"}]}]}`,
+		"empty sel":   `{"scenes": [{"html": "a", "steps": [{"say": "y", "box": ""}]}]}`,
+		"html + img":  `{"scenes": [{"say": "x", "html": "a", "image": "b"}]}`,
 		"bad align":   `{"scenes": [{"say": "y", "code": {"file": "a", "align": "middle"}}]}`,
 		"bad focus":   `{"scenes": [{"code": {"file": "a"}, "steps": [{"say": "y", "focus": [3]}]}]}`,
 		"empty mark":  `{"scenes": [{"code": {"file": "a"}, "steps": [{"say": "y", "marks": [""]}]}]}`,
@@ -216,5 +230,14 @@ func TestSilentClipLength(t *testing.T) {
 	}
 	if l := b.timings[0].Length; math.Abs(l-2) > 0.05 {
 		t.Fatalf("length %.2f, want the cut's 2 s", l)
+	}
+}
+
+// Pages are made, not real: they count as slides
+func TestSlideSharePages(t *testing.T) {
+	scenes := []Scene{{HTML: "a.html"}, {Clip: "b.mp4"}}
+	timings := []timing{{Length: 3}, {Length: 1}}
+	if got := slideShare(scenes, timings); got != 0.75 {
+		t.Fatalf("share %v, want 0.75", got)
 	}
 }

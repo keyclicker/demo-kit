@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/coder/websocket"
+	"github.com/keyclicker/demo-kit/internal/cdp"
 	flag "github.com/spf13/pflag"
 )
 
@@ -241,16 +241,14 @@ func closeBrowser(port int) error {
 		return nil // nothing listens: nothing to close
 	}
 
-	c, _, err := websocket.Dial(ctx, target, nil)
+	c, err := cdp.Dial(ctx, target)
 	if err != nil {
-		return fmt.Errorf("devtools %d: %w", port, err)
+		return fmt.Errorf("port %d: %w", port, err)
 	}
-	defer c.CloseNow()
+	defer c.Close()
 
-	msg := `{"id":1,"method":"Browser.close"}`
-	if err := c.Write(ctx, websocket.MessageText, []byte(msg)); err != nil {
-		return fmt.Errorf("devtools %d: Browser.close: %w", port, err)
-	}
+	// No answer is fine: the browser may quit first. Its port tells
+	c.Call(ctx, "", "Browser.close", nil, nil)
 
 	gone := func() bool { return !devToolsUp(port) }
 	if !waitFor(gone, 15*time.Second) {
