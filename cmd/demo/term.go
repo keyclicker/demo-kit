@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -116,8 +117,9 @@ func runTerm(ctx context.Context, t TermSpec, scriptPath string) (
 		"never", "--command", "bash --noprofile --norc "+
 			shellQuote(scriptPath), "/dev/null")
 	cmd.Dir = t.Dir
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "PAGER=cat",
-		"GIT_PAGER=cat", "COLUMNS="+strconv.Itoa(termCols))
+	cmd.Env = append(termEnv(os.Environ(), keyEnvs),
+		"TERM=xterm-256color", "PAGER=cat", "GIT_PAGER=cat",
+		"COLUMNS="+strconv.Itoa(termCols))
 
 	// Its own process group, killed whole: script, and with its pty
 	// gone, the session's bash and commands (they get SIGHUP)
@@ -159,6 +161,16 @@ func splitSession(out string, n int, mark markers) ([]termResult,
 	return results, nil
 }
 
+// termEnv is environ without the TTS key's variables (keyEnvs): a
+// scene running `env` would draw a key the user's shell exports into
+// the video.
+func termEnv(environ, keyEnvs []string) []string {
+	return slices.DeleteFunc(slices.Clone(environ), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(keyEnvs, name)
+	})
+}
+
 // shellQuote quotes s for sh.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
@@ -176,8 +188,8 @@ var ansiColors = [16]color.RGBA{
 
 // parseANSI reads terminal output into lines of colored runs: SGR
 // colors and bold are kept, other escapes dropped, \r's before a \n
-// are part of it (CRLF), a lone \r starts its line over (progress
-// bars), tabs expand to 8.
+// are part of it (CRLF), a lone \r or a CSI move to column 1 (ESC[G)
+// starts its line over (progress bars), tabs expand to 8.
 func parseANSI(s string) [][]run {
 	var lines [][]run
 	var line []run
@@ -196,30 +208,37 @@ func parseANSI(s string) [][]run {
 		cols += utf8.RuneCountInString(text)
 	}
 
+	// A move to column 1 starts the line over, unless the line ends
+	// there: at i, the rest of s
+	restart := func(i int) {
+		if i < len(s) && s[i] != '\n' && s[i] != '\r' {
+			line, cols = nil, 0
+		}
+	}
+
 	for i := 0; i < len(s); {
 		c := s[i]
 		switch {
 		case c == 0x1b:
-			n, sgr := escape(s[i:])
-			if sgr != nil {
-				style = applySGR(style, sgr)
+			e := escape(s[i:])
+			if e.sgr != nil {
+				style = applySGR(style, e.sgr)
 			}
-			i += n
+			i += e.n
+			if e.home {
+				restart(i)
+			}
 			continue
 
 		case c == '\n':
 			lines, line, cols = append(lines, line), nil, 0
 		case c == '\r':
 			// \r\n ends a line, as does \r\r\n: a program's own CRLF
-			// after the pty's onlcr. A lone \r starts the line over
-			j := i
-			for j < len(s) && s[j] == '\r' {
-				j++
+			// after the pty's onlcr
+			for i < len(s) && s[i] == '\r' {
+				i++
 			}
-			if j < len(s) && s[j] != '\n' {
-				line, cols = nil, 0
-			}
-			i = j
+			restart(i)
 			continue
 		case c == '\t':
 			put(strings.Repeat(" ", 8-cols%8))
@@ -241,37 +260,63 @@ func parseANSI(s string) [][]run {
 	return lines
 }
 
-// escape measures the escape sequence at s's start; for SGR (ESC [ ...
-// m) it also returns the parameters.
-func escape(s string) (n int, sgr []int) {
+// esc is one escape sequence, as escape measured it.
+type esc struct {
+	n    int   // its bytes
+	sgr  []int // an SGR's (ESC [ ... m) parameters, else nil
+	home bool  // a move to column 1 (ESC [ G, ESC [ 1 G): as \r is
+}
+
+// escape measures the escape sequence at s's start, per ECMA-48: CSI,
+// the string sequences (OSC, DCS, SOS, PM, APC) up to ST (or BEL), or
+// else intermediates (0x20-0x2F) and one final byte (0x30-0x7E), such
+// as a charset select's ESC ( B. One cut off runs to s's end.
+func escape(s string) esc {
 	if len(s) < 2 {
-		return len(s), nil
+		return esc{n: len(s)}
 	}
 
 	switch s[1] {
-	case '[': // CSI: parameters, then a final byte in @..~
+	case '[': // CSI: parameters, intermediates, a final byte in @..~
 		for i := 2; i < len(s); i++ {
-			if s[i] >= 0x40 && s[i] <= 0x7e {
-				if s[i] == 'm' {
-					return i + 1, sgrParams(s[2:i])
-				}
-				return i + 1, nil
+			if s[i] < 0x40 || s[i] > 0x7e {
+				continue
 			}
-		}
-		return len(s), nil
 
-	case ']': // OSC: until BEL or ESC \
+			params := s[2:i]
+			switch s[i] {
+			case 'm':
+				return esc{n: i + 1, sgr: sgrParams(params)}
+			case 'G':
+				home := params == "" || params == "0" || params == "1"
+				return esc{n: i + 1, home: home}
+			}
+			return esc{n: i + 1}
+		}
+		return esc{n: len(s)}
+
+	case ']', 'P', 'X', '^', '_': // strings: until ST (ESC \) or BEL
 		for i := 2; i < len(s); i++ {
 			if s[i] == 0x07 {
-				return i + 1, nil
+				return esc{n: i + 1}
 			}
 			if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' {
-				return i + 2, nil
+				return esc{n: i + 2}
 			}
 		}
-		return len(s), nil
+		return esc{n: len(s)}
 	}
-	return 2, nil
+
+	// Intermediates, then the final byte: not a control, which ends the
+	// broken sequence and stays
+	i := 1
+	for i < len(s) && s[i] >= 0x20 && s[i] <= 0x2f {
+		i++
+	}
+	if i < len(s) && s[i] >= 0x30 && s[i] <= 0x7e {
+		i++
+	}
+	return esc{n: i}
 }
 
 // sgrParams parses "1;38;5;208"; empty means 0 (reset).

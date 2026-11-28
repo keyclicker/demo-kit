@@ -84,6 +84,24 @@ func probeSize(ctx context.Context, path string) (w, h int, err error) {
 	return w, h, nil
 }
 
+// probeRate is a video's (first video stream's) average frame rate, as
+// ffprobe's "num/den". A stream that names none counts as the build's.
+func probeRate(ctx context.Context, path string) (string, error) {
+	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error",
+		"-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate",
+		"-of", "csv=p=0", path).Output()
+	if err != nil {
+		return "", fmt.Errorf("ffprobe %s: %w", path, err)
+	}
+
+	var num, den int
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(out)), "%d/%d", &num,
+		&den); err != nil || num <= 0 || den <= 0 {
+		num, den = fps, 1
+	}
+	return fmt.Sprintf("%d/%d", num, den), nil
+}
+
 // Chapter is one chapter of a finished video, in seconds.
 type Chapter struct {
 	Title      string

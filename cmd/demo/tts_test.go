@@ -69,17 +69,50 @@ func TestSynthesizeAndCost(t *testing.T) {
 }
 
 func TestPCMInput(t *testing.T) {
-	cases := map[string]string{
-		"audio/pcm;rate=24000;channels=1":   "-f s16le -ar 24000 -ac 1",
-		"audio/pcm":                         "-f s16le -ar 24000 -ac 1",
-		"audio/L16; rate=44100; channels=2": "-f s16le -ar 44100 -ac 2",
-		"audio/mpeg":                        "",
-		"":                                  "",
+	mono, stereo := "-f s16le -ar 24000 -ac 1", "-f s16le -ar 44100 -ac 2"
+	cases := map[string]struct {
+		flags   string
+		assumed bool
+	}{
+		"audio/pcm;rate=24000;channels=1":   {mono, false},
+		"audio/pcm":                         {mono, true},
+		"audio/L16; rate=44100; channels=2": {stereo, false},
+		"audio/mpeg":                        {"", false},
+		"":                                  {"", false},
 	}
 	for ct, want := range cases {
-		if got := strings.Join(pcmInput(ct), " "); got != want {
-			t.Errorf("pcmInput(%q) = %q, want %q", ct, got, want)
+		flags, assumed := pcmInput(ct)
+		if got := strings.Join(flags, " "); got != want.flags ||
+			assumed != want.assumed {
+			t.Errorf("pcmInput(%q) = %q, %v; want %q, %v", ct, got,
+				assumed, want.flags, want.assumed)
 		}
+	}
+}
+
+// PCM without a rate is taken as 24 kHz, said once per run
+func TestSynthesizeWarnsAssumedRate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "audio/pcm")
+			w.Write(make([]byte, 4800))
+		}))
+	defer srv.Close()
+
+	var log strings.Builder
+	tts := testEngine(srv.URL)
+	tts.stderr = &log
+
+	for range 2 {
+		sp, err := tts.synthesize(context.Background(), Voice{Model: "m"},
+			"hi")
+		if err != nil || strings.Join(sp.Input, " ") !=
+			"-f s16le -ar 24000 -ac 1" {
+			t.Fatalf("%+v %v", sp, err)
+		}
+	}
+	if n := strings.Count(log.String(), "assumed 24000 Hz"); n != 1 {
+		t.Fatalf("warned %d times: %q", n, log.String())
 	}
 }
 
@@ -141,7 +174,7 @@ func TestEngineKeys(t *testing.T) {
 		}))
 	defer srv.Close()
 
-	local := newEngine(config.TTS{URL: srv.URL + "/v1/"})
+	local := newEngine(config.Config{TTS: config.TTS{URL: srv.URL + "/v1/"}})
 	if err := local.ready(); err != nil {
 		t.Fatalf("keyless not ready: %v", err)
 	}
@@ -157,14 +190,16 @@ func TestEngineKeys(t *testing.T) {
 	}
 
 	t.Setenv("TEST_TTS_KEY", " sk-1\n")
-	keyed := newEngine(config.TTS{URL: srv.URL, KeyEnv: "TEST_TTS_KEY"})
+	keyed := newEngine(config.Config{TTS: config.TTS{URL: srv.URL,
+		KeyEnv: "TEST_TTS_KEY"}})
 	if _, err := keyed.synthesize(context.Background(),
 		Voice{Model: "m"}, "hi"); err != nil || auth[1] != "Bearer sk-1" {
 		t.Fatalf("keyed: %v, auth %q", err, auth)
 	}
 
 	t.Setenv("TEST_TTS_KEY", "")
-	keyed = newEngine(config.TTS{URL: srv.URL, KeyEnv: "TEST_TTS_KEY"})
+	keyed = newEngine(config.Config{TTS: config.TTS{URL: srv.URL,
+		KeyEnv: "TEST_TTS_KEY"}})
 	if err := keyed.ready(); err == nil ||
 		!strings.Contains(err.Error(), "TEST_TTS_KEY") {
 		t.Fatalf("keyed without key: %v", err)

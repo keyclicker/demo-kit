@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // A clip that keeps its sound (a narrated demo, someone talking) is
@@ -37,17 +38,13 @@ func quietCuts(ctx context.Context, s Scene) (from, to float64,
 			s.Clip)
 	}
 
-	length, err := probeDuration(ctx, s.Clip)
-	if err != nil {
-		return 0, 0, err
-	}
-	ps, err := pauses(ctx, s.Clip, length)
+	snd, err := listen(ctx, s.Clip)
 	if err != nil {
 		return 0, 0, err
 	}
 
 	move := func(name string, t float64, end bool) float64 {
-		at, ok := cutAt(ps, t, end)
+		at, ok := cutAt(snd.pauses, t, end)
 		switch {
 		case !ok:
 			fmt.Fprintf(os.Stderr, "demo: scene %d: %s %.1f s is mid-speech,"+
@@ -67,15 +64,9 @@ func quietCuts(ctx context.Context, s Scene) (from, to float64,
 	switch {
 	case to > 0:
 		to = move("to", to, true)
-	default:
+	case snd.loud:
 		// No to: the file's own end, mid-speech if it was cut so
-		loud, err := endsLoud(ctx, s.Clip)
-		if err != nil {
-			return 0, 0, err
-		}
-		if loud {
-			to = move("its end", length, true)
-		}
+		to = move("its end", snd.end, true)
 	}
 
 	// Moved into pauses, a start can pass its end
@@ -91,8 +82,17 @@ func quietCuts(ctx context.Context, s Scene) (from, to float64,
 // cutAt moves a cut at t into a pause of ps: an end finishes its phrase
 // (the next pause) or else stops before it (the last one); a start
 // begins its phrase, or else the next. ok is false when no pause is
-// within quietWindow; t is kept then.
+// within quietWindow; t is kept then. The landing is bound as the
+// reach is, plus quietPad: anywhere in a pause is a quiet cut, and a
+// long pause's far edge would drop the picture between.
 func cutAt(ps []span, t float64, end bool) (at float64, ok bool) {
+	at, ok = pauseCut(ps, t, end)
+	reach := quietWindow + quietPad
+	return min(max(at, t-reach), t+reach), ok
+}
+
+// pauseCut is cutAt's landing before the quietWindow bound.
+func pauseCut(ps []span, t float64, end bool) (at float64, ok bool) {
 	var prev, next *span
 	for i := range ps {
 		p := &ps[i]
@@ -123,11 +123,86 @@ func cutAt(ps []span, t float64, end bool) (at float64, ok bool) {
 	return t, false
 }
 
+// sound is what a clip's audio does, as cuts need it.
+type sound struct {
+	length float64 // the file's
+	end    float64 // the audio stream's own: it may stop before the video
+	loud   bool    // loud in its last 0.1 s: cut mid-speech
+
+	// pauses are its quiet spans, quietMin or longer. Past end is quiet
+	// too, unless it ends loud: speech cut off is no pause.
+	pauses []span
+}
+
+// listen probes clip's sound (its first audio stream).
+func listen(ctx context.Context, clip string) (sound, error) {
+	length, err := probeDuration(ctx, clip)
+	if err != nil {
+		return sound{}, err
+	}
+
+	end, err := audioEnd(ctx, clip, length)
+	if err != nil {
+		return sound{}, err
+	}
+
+	loud, err := endsLoud(ctx, clip, end)
+	if err != nil {
+		return sound{}, err
+	}
+
+	ps, err := pauses(ctx, clip, end)
+	if err != nil {
+		return sound{}, err
+	}
+	if !loud {
+		ps = quietTail(ps, end, length)
+	}
+
+	return sound{length: length, end: end, loud: loud, pauses: ps}, nil
+}
+
+// audioEnd is where clip's first audio stream ends: a recording's
+// sound often stops a few frames before its picture. length when the
+// container doesn't say.
+func audioEnd(ctx context.Context, clip string, length float64) (float64,
+	error) {
+
+	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error",
+		"-select_streams", "a:0", "-show_entries",
+		"stream=start_time,duration", "-of", "csv=p=0", clip).Output()
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe %s: %w", clip, err)
+	}
+
+	start, dur, _ := strings.Cut(strings.TrimSpace(string(out)), ",")
+	from, err1 := strconv.ParseFloat(start, 64)
+	secs, err2 := strconv.ParseFloat(dur, 64)
+	if err1 != nil || err2 != nil {
+		return length, nil
+	}
+	return min(from+secs, length), nil
+}
+
+// quietTail adds the stretch from end (the audio's) to length (the
+// file's) to ps, joined to a pause that reaches end.
+func quietTail(ps []span, end, length float64) []span {
+	if end >= length {
+		return ps
+	}
+
+	if n := len(ps); n > 0 && ps[n-1].to >= end {
+		ps[n-1].to = length
+		return ps
+	}
+	return append(ps, span{end, length})
+}
+
 var silenceRE = regexp.MustCompile(`silence_(start|end): (-?[0-9.]+)`)
 
 // pauses are a clip's quiet spans, quietMin or longer (silencedetect);
-// one still open at the end runs to length.
-func pauses(ctx context.Context, clip string, length float64) ([]span,
+// one still open at the audio's end runs to end.
+func pauses(ctx context.Context, clip string, end float64) ([]span,
 	error) {
 
 	out, err := exec.CommandContext(ctx, "ffmpeg", "-hide_banner",
@@ -137,11 +212,11 @@ func pauses(ctx context.Context, clip string, length float64) ([]span,
 	if err != nil {
 		return nil, fmt.Errorf("pauses in %s: %v: %s", clip, err, out)
 	}
-	return parsePauses(string(out), length), nil
+	return parsePauses(string(out), end), nil
 }
 
-// parsePauses reads silencedetect's log.
-func parsePauses(log string, length float64) []span {
+// parsePauses reads silencedetect's log; a pause still open runs to end.
+func parsePauses(log string, end float64) []span {
 	var ps []span
 	open := -1.0
 	for _, m := range silenceRE.FindAllStringSubmatch(log, -1) {
@@ -154,20 +229,24 @@ func parsePauses(log string, length float64) []span {
 		}
 	}
 	if open >= 0 {
-		ps = append(ps, span{open, length})
+		ps = append(ps, span{open, end})
 	}
 	return ps
 }
 
 var meanRE = regexp.MustCompile(`mean_volume: (-?[0-9.]+) dB`)
 
-// endsLoud reports whether a clip's sound is loud in its last 0.1 s:
-// cut mid-speech. (A speech file's short quiet tail is too short for
-// pauses to see.)
-func endsLoud(ctx context.Context, clip string) (bool, error) {
+// endsLoud reports whether a clip's sound is loud in its last 0.1 s,
+// up to end (the audio's own): cut mid-speech. (A speech file's short
+// quiet tail is too short for pauses to see.) Not -sseof: that counts
+// from the container's end, past a shorter audio stream.
+func endsLoud(ctx context.Context, clip string, end float64) (bool,
+	error) {
+
 	out, err := exec.CommandContext(ctx, "ffmpeg", "-hide_banner",
-		"-nostats", "-nostdin", "-sseof", "-0.1", "-i", clip, "-map",
-		"0:a:0", "-af", "volumedetect", "-f", "null", "-").CombinedOutput()
+		"-nostats", "-nostdin", "-ss", ftoa(max(0, end-0.1)), "-i", clip,
+		"-map", "0:a:0", "-af", "volumedetect", "-f", "null",
+		"-").CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("loudness of %s: %v: %s", clip, err, out)
 	}

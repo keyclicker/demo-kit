@@ -127,7 +127,8 @@ func cmdClaim(args []string) error {
 	return nil
 }
 
-// cmdRelease drops the caller's claim on a user display.
+// cmdRelease drops the caller's claim on a user display, and stops its
+// recording: the claim is what let it record.
 func cmdRelease(args []string) error {
 	fs := flag.NewFlagSet("release", flag.ExitOnError)
 	force := fs.Bool("force", false, "drop another agent's claim")
@@ -150,6 +151,17 @@ func cmdRelease(args []string) error {
 	case !o.Same(me) && !*force:
 		return fmt.Errorf(":%d is claimed by %s, not you; --force to "+
 			"drop it anyway", n, o)
+	}
+
+	if r := readRec(n); r != nil {
+		if !r.Owner.Same(me) && !*force {
+			return fmt.Errorf(":%d's recording belongs to %s, not you; "+
+				"--force to stop it and release", n, r.Owner)
+		}
+
+		if err := stopRec(n, r); err != nil {
+			return err
+		}
 	}
 
 	return os.Remove(claimPath(n))

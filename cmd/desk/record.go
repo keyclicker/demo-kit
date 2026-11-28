@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -126,13 +127,15 @@ func startSegment(display, path string, audio, env []string) (*segment,
 }
 
 // stop makes ffmpeg finalize the segment: an mp4 is unplayable until
-// its trailer is written.
+// its trailer is written. One that won't in 20 s is killed, its part
+// likely broken (joinSegments checks).
 func (s *segment) stop() {
 	s.cmd.Process.Signal(syscall.SIGINT)
 
 	select {
 	case <-s.done:
 	case <-time.After(20 * time.Second):
+		log.Printf("ffmpeg didn't finalize %s in 20s: killed", s.path)
 		s.cmd.Process.Kill()
 		<-s.done
 	}
@@ -146,8 +149,17 @@ func partPath(path string, k int) string {
 
 // joinSegments makes the parts one video at path, losslessly (same
 // encoder, same flags, so the concat demuxer can copy), then removes
-// the parts.
+// the parts. path appears only once it is whole: the join goes to a
+// hidden name beside it, renamed on success. On any error the parts
+// stay and path doesn't exist.
 func joinSegments(path string, parts []string) error {
+	// The concat demuxer skips an unreadable part and still exits 0
+	for _, p := range parts {
+		if err := checkVideo(p); err != nil {
+			return err
+		}
+	}
+
 	if len(parts) == 1 {
 		return os.Rename(parts[0], path)
 	}
@@ -161,16 +173,46 @@ func joinSegments(path string, parts []string) error {
 	list.WriteString(concatList(parts))
 	list.Close()
 
-	join := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-		"-f", "concat", "-safe", "0", "-i", list.Name(),
-		"-c", "copy", "-movflags", "+faststart", path)
+	tmp := joinTemp(path)
+	defer os.Remove(tmp)
+
+	// No -xerror: a part whose sound ends with or after its picture
+	// overlaps the next by under an AAC frame, which ffmpeg fixes up
+	// (non-monotonic DTS) unless told that every error is fatal
+	join := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
+		"-y", "-f", "concat", "-safe", "0", "-i", list.Name(),
+		"-c", "copy", "-movflags", "+faststart", "-f", "mp4", tmp)
 	if out, err := join.CombinedOutput(); err != nil {
 		return fmt.Errorf("join %d segments: %v: %s", len(parts), err, out)
+	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		return err
 	}
 
 	for _, p := range parts {
 		os.Remove(p)
 	}
+	return nil
+}
+
+// joinTemp names the hidden file a video at path is joined into.
+func joinTemp(path string) string {
+	return filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+
+		".joining")
+}
+
+// checkVideo reads every packet of the video at path, without decoding.
+// A probe isn't enough: a part cut short after +faststart moved its
+// index up front still probes fine.
+func checkVideo(path string) error {
+	read := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
+		"-xerror", "-i", path, "-map", "0", "-c", "copy", "-f", "null", "-")
+	if out, err := read.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s is broken: %v: %s", path, err,
+			tail(string(out), 1))
+	}
+
 	return nil
 }
 

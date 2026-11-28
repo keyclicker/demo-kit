@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 
 	"github.com/keyclicker/demo-kit/internal/config"
@@ -83,9 +84,17 @@ func main() {
 // cfg is the config in effect, set once by main.
 var cfg config.Config
 
+// keyEnvs is every tts.key_env this run had in effect: the file's, then
+// a flag's. Term scenes run without them all (termEnv).
+var keyEnvs []string
+
 // configure makes c the config in effect, defaults included.
 func configure(c config.Config) {
 	cfg = c
+	if k := c.TTS.KeyEnv; k != "" && !slices.Contains(keyEnvs, k) {
+		keyEnvs = append(keyEnvs, k)
+	}
+
 	defaultVoice = Voice{
 		Model:        c.TTS.Model,
 		Name:         c.TTS.Voice,

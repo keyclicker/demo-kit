@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -106,5 +107,48 @@ func TestReadTreeIgnoredDir(t *testing.T) {
 	}
 	if s := l.Files[0].Status; s != "1 file" {
 		t.Fatalf("status %q", s)
+	}
+}
+
+// git lists a file moved without staging under both names, and a
+// nested repository as "nested/": the tree shows the worktree, and the
+// nested repository as a directory
+func TestReadTreeWorktree(t *testing.T) {
+	dir := t.TempDir()
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c",
+			"user.name=t", "-c", "user.email=t@t"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git %v: %v: %s", args, err, out)
+		}
+	}
+
+	git(dir, "init", "-q")
+	for _, f := range []string{"a.go", "b.go"} {
+		os.WriteFile(filepath.Join(dir, f), nil, 0o644)
+	}
+	git(dir, "add", ".")
+	git(dir, "commit", "-qm", "init")
+	os.Rename(filepath.Join(dir, "a.go"), filepath.Join(dir, "c.go"))
+
+	nested := filepath.Join(dir, "nested")
+	os.Mkdir(nested, 0o755)
+	git(nested, "init", "-q")
+	os.WriteFile(filepath.Join(nested, "x.go"), nil, 0o644)
+
+	l, err := readTree(context.Background(), dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var lines []string
+	for _, cl := range l.Files[0].Hunks[0].Lines[1:] {
+		lines = append(lines, cl.Text)
+	}
+	want := []string{"├── nested/", "├── b.go", "└── c.go"}
+	if !slices.Equal(lines, want) || l.Files[0].Status != "2 files" {
+		t.Fatalf("tree (%s): %q; want %q, 2 files", l.Files[0].Status,
+			lines, want)
 	}
 }

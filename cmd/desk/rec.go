@@ -50,14 +50,18 @@ func recPath(n int) string {
 }
 
 // readRec returns display n's live recording, or nil. State left by a
-// dead unit is stale: remove it.
+// dead unit is stale: remove it. When systemd can't be asked, the
+// state file's word stands.
 func readRec(n int) *Recording {
 	data, err := os.ReadFile(recPath(n))
 	if err != nil {
 		return nil
 	}
 
-	if !unitAlive(recUnitName(n)) {
+	switch alive, err := unitAlive(recUnitName(n)); {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "desk: :%d recording: %v (kept)\n", n, err)
+	case !alive:
 		os.Remove(recPath(n))
 		return nil
 	}
@@ -122,9 +126,13 @@ func parseRecDisplay(s string) (int, error) {
 }
 
 // printRecording reports a finished video: path, and its tailnet URL;
-// or, when the join failed, the parts left behind.
+// or, when the join failed, the parts left behind. video exists only
+// once joined whole (joinSegments). Callers stopped the recorder.
 func printRecording(n int, video string) {
 	if !exists(video) {
+		// A recorder killed mid-join couldn't remove its half
+		os.Remove(joinTemp(video))
+
 		parts, _ := filepath.Glob(strings.TrimSuffix(video, ".mp4") +
 			".part*.mp4")
 		fmt.Printf(":%d recording not saved: %s (parts kept: %s; see "+
@@ -266,7 +274,9 @@ func checkRecordable(n int, me Owner, force bool) error {
 // first frames are encoded. Callers hold the state lock.
 func startRec(n int, owner Owner, video string) error {
 	unit := recUnitName(n)
-	if unitAlive(unit) {
+	if alive, err := unitAlive(unit); err != nil {
+		return err
+	} else if alive {
 		return fmt.Errorf(":%d is already recording (desk rec stop :%d)",
 			n, n)
 	}
@@ -283,7 +293,7 @@ func startRec(n int, owner Owner, video string) error {
 		return err
 	}
 
-	home, err := os.UserHomeDir()
+	auth, err := xauthority(":" + strconv.Itoa(n))
 	if err != nil {
 		return err
 	}
@@ -296,7 +306,7 @@ func startRec(n int, owner Owner, video string) error {
 		"--property=Type=notify", "--property=TimeoutStartSec=30",
 		"--property=TimeoutStopSec=120", "--property=KillMode=mixed",
 		fmt.Sprintf("--property=ExecStopPost=%s rec cleanup %d", self, n),
-		"--setenv=XAUTHORITY=" + filepath.Join(home, ".Xauthority"),
+		"--setenv=XAUTHORITY=" + auth,
 	}
 
 	// A desk display's recording lives and dies with it, and stops
@@ -367,6 +377,12 @@ func cmdRecStop(args []string) error {
 		return fmt.Errorf(":%d isn't recording", n)
 	}
 
+	return stopRec(n, r)
+}
+
+// stopRec stops display n's recording r and prints the video. Callers
+// checked the caller may.
+func stopRec(n int, r *Recording) error {
 	// Blocks until the unit is down: video joined and final
 	stop := exec.Command("systemctl", "--user", "stop", recUnitName(n))
 	stop.Stderr = os.Stderr
@@ -455,13 +471,11 @@ func cmdRecRun(args []string) error {
 
 	state := Recording{Video: *video, Owner: owner}
 	if err := writeRec(n, state); err != nil {
-		r.finish()
-		return err
+		return errors.Join(err, r.finish())
 	}
 
 	if err := notify("READY=1"); err != nil {
-		r.finish()
-		return err
+		return errors.Join(err, r.finish())
 	}
 
 	ownerGone := make(chan struct{})
@@ -489,8 +503,8 @@ func cmdRecRun(args []string) error {
 			// The display went away, or ffmpeg crashed
 			log.Printf("ffmpeg exited on its own, saving")
 			r.current = nil
-			r.finish()
-			return errors.New("ffmpeg exited mid-recording")
+			return errors.Join(errors.New("ffmpeg exited mid-recording"),
+				r.finish())
 		}
 
 		state.Paused = r.current == nil

@@ -10,7 +10,9 @@ How the pieces work and why, for whoever changes them. Users read
   config file), `paths` (XDG dirs), `encode` (H.264 choice)
 - A new setting: field + doc in `internal/config` (schema, default,
   `resolve` check), the README's key table. Every binary has
-  `<bin> config [KEY]`. Secrets only via env / `.env`, never config
+  `<bin> config [KEY]`. Secrets only via env / `.env`, never config,
+  and read only through `Config.Secret` (env first, then `.env`):
+  `.env` is never exported, so nothing spawned sees it
 - Nothing machine-specific in code, docs or commits: no host names,
   user names, home paths or tailnet names. Machine choices go in the
   user's config
@@ -26,8 +28,12 @@ the finished videos: path, plus a link when `publish.url` is set);
 `desk rec start|pause|resume|stop :N`. Agents learn it from the
 `x11-computer-use` skill (`skills/`).
 
-- Desktop `:N` (10-99) = transient user unit `desk-N`, main process
+- Desktop `:N` (20-99) = transient user unit `desk-N`, main process
   `desk run --owner PID:START N WxH`:
+  - Not 10-19: sshd forwards X from `:10` (`X11DisplayOffset`) into
+    the same `~/.Xauthority` entries, and its displays are loopback TCP
+    only (6000+N), no socket or lock. `freeDisplay` also skips any N
+    whose port is bound. Older desktops on 10-19 still list and `rm`
   - `Xtigervnc` (else `Xvnc`) `:N -rendernode NODE`: GL on the GPU via
     DRI3. NODE is `video.render_node`, passed only when this Xvnc has
     the flag (TigerVNC 1.14+); else software GL. VNC on `127.0.0.1:59NN`, which ignores all VNC input
@@ -40,7 +46,9 @@ the finished videos: path, plus a link when `publish.url` is set);
     Terminals too (Ghostty, xterm): sizing themselves to the screen
     (`-maximized`) pushes xfwm4's frame off its right edge
   - Fresh MIT cookie, added to `~/.Xauthority` so agents' clients
-    connect with just `DISPLAY`
+    connect with just `DISPLAY`. Every xauth call goes through `xauth`
+    (`run.go`), commands on stdin (`source -`): argv is world-readable
+    in `/proc`
   - A silent VNC client of its own, logged in but never requesting
     updates: with no client, Xvnc ticks Present's vblank at 1 Hz
     (`VNCServerST::startFrameClock`), so GL apps and browsers crawl
@@ -55,6 +63,10 @@ the finished videos: path, plus a link when `publish.url` is set);
   them once their unit is gone. The host display has no file: `desk
   ls` adds `desk.host_display` while its X socket exists, with
   `desk.host_vnc` as its `vnc`
+  - `unitAlive` returns an error when `systemctl show` fails (bus
+    timeout, manager re-exec): never "dead". Tokens and `.rec-N` then
+    stay, with a warning; deskview's `desk ls` every 3 s would
+    otherwise wipe every live desktop on one hiccup
 - Ownership: the owner is the first non-shell ancestor of `desk new`
   (an agent's tool calls are short-lived shells, so: `claude`,
   `codex`), or `$DESK_OWNER_PID`. Identified by PID + start time
@@ -66,7 +78,9 @@ the finished videos: path, plus a link when `publish.url` is set);
   claim on the host display, `stateDir/.claim-N` (same owner format;
   stale once the owner exits). Without `--force` it needs the user idle
   10+ min (XScreenSaver `MsSinceUserInput`, any input source), else
-  exits 3 so the agent asks. Another agent's live claim always blocks
+  exits 3 so the agent asks. Another agent's live claim always blocks.
+  `release` stops that display's recording first (`stopRec`, as `rec
+  stop`; the recording's owner or `--force`) and prints its video
 - `ExecStopPost=desk cleanup N` removes the token, cookie and a dead
   Xvnc's lock and socket, crashes included
 - Recording (`rec.go`, `record.go`): transient unit `desk-rec-N`, main
@@ -92,11 +106,25 @@ the finished videos: path, plus a link when `publish.url` is set);
     stops `desk-rec-N` itself before Xvnc
   - Never overwrites: `start` refuses an existing video or `part1`;
     `stop`/`rm` print "not saved" plus the kept parts if the join failed
+  - Join (`joinSegments`), all or nothing: every part's packets read
+    first (`checkVideo`; the concat demuxer skips a broken part and
+    exits 0, and a probe passes one cut short after `+faststart`),
+    into a hidden `.NAME.joining` renamed on success. No `-xerror` on
+    the join itself: parts with sound overlap by under an AAC frame,
+    which ffmpeg fixes up unless every error is fatal. So the
+    video existing means it's whole; parts go only after, and
+    `stop`/`rm` remove the half a recorder killed mid-join left. A
+    segment ffmpeg won't finalize in 20 s is killed, logged
   - State: `stateDir/.rec-N` (owner, video, `recording|paused`),
     written by the recorder only; stops when its owner exits
   - `pause`/`resume`/`stop` need the recording's owner, or `--force`
 - `desk new` holds `stateDir/.lock` until the unit is ready (unit is
   `Type=notify`), so parallel calls never share a display
+- X authority: `xauthority(display)` is the one answer. A desk
+  display's cookie is in `~/.Xauthority`; the host display's in the
+  caller's own (`$XAUTHORITY`: GDM, SDDM, Xwayland keep it elsewhere).
+  `desk run` sets it for its whole process (xgb and children agree);
+  the recorder and the browser supervisor get it too
 - Units get the caller's `XDG_*` dirs (`unitEnv`, `--setenv`): the
   user manager may lack them, and the unit must read the same config
 - `:0` on Wayland is Xwayland: `claim` and `rec :0` refuse it
@@ -115,6 +143,10 @@ and learn it from the `hybrid-browser` skill.
   Testing: no automation flags (`navigator.webdriver` false). Flatpak
   is just config (`["flatpak", "run", "org.chromium.Chromium"]`)
 - Gets `PULSE_SINK=desk-N` when that sink is up: its sound is recorded
+- Env (`browserEnv`): the display and its `xauthority`, no
+  `WAYLAND_DISPLAY` or `XDG_SESSION_TYPE`: with them a recent Chromium
+  opens on the user's Wayland desktop. No flags for it: `browser.command`
+  is the user's
 - A browser is its DevTools port, never a process found in `/proc`:
   launchers that fork work, and the user's own Chromium can't be hit
 - Profiles: `temp` (default): fresh, deleted on exit, any number in
@@ -131,6 +163,12 @@ and learn it from the `hybrid-browser` skill.
   `desk browser supervise` runs the browser, waits for its port to
   close, then deletes the run. Both hold `lock`; `start` sweeps runs
   whose lock is free (reboot, kill -9)
+  - A launcher that returns (`systemd-run`, `flatpak run`) leaves the
+    port to tell: up while it ran, or within 30 s of a clean exit
+    (`startWait`), and the run lives until the port closes, uncapped
+  - A port that never comes up is a failed launch: the supervisor
+    exits, run and log kept. `start` sees the lock go, prints the log's
+    tail and removes the run, instead of waiting out its 30 s
 - Widevine: Chromium downloads it ~1 min into a profile's first
   launch and loads it only on the next. The newest CDM a temp
   profile downloaded is cached in `$XDG_CACHE_HOME/demo-kit/widevine`
@@ -166,11 +204,20 @@ as the proxy strips the prefix and both forms arrive as `/`.
   VERSION`; `TestImportsResolve` checks every import is embedded
 - 🖱 control / 👁 view only: the shown screen's `rfb.viewOnly`, live.
   Agent tabs: disabled
+- Hosts (`hosts.go`, `knownHosts`, every route): only a Host of
+  `localhost`, an IP address (any port) or a `deskview.hosts` name,
+  else 403 naming the key: a site rebinding its name to loopback is
+  same-origin by construction, and an address is no name to rebind.
+  `tailscale serve` passes the incoming
+  Host on (plus it as `X-Forwarded-Host`), so its public name goes in
+  `deskview.hosts`. Every `X-Forwarded-Host` name must be known too
+  (`requestHosts`): a proxy that rewrites Host carries the public
+  name only there. That header only refuses, never makes a host known
 - `/vnc/{token}`: WebSocket ↔ VNC TCP (`coder/websocket` `NetConn`),
   only to displays `desk ls` lists, same origin only (`Origin` host =
-  `Host` or a set `X-Forwarded-Host`, exactly; a hostless `Origin`,
-  `null` or `file://`, is refused; none is not a browser), subprotocol
-  `binary`
+  `Host` or a set `X-Forwarded-Host`, exactly; a hostless
+  `Origin`, `null` or `file://`, is refused; none is not a browser),
+  subprotocol `binary`
 - Sound: VNC carries none. `/audio/stream` = raw s16le 48 kHz stereo
   (format in `X-Audio-*` headers), ~1.5 Mbit/s per listener. One
   `pw-record` of `deskview.audio_sink`'s monitor (default: the default
@@ -179,13 +226,16 @@ as the proxy strips the prefix and both forms arrive as `/`.
   (desk displays through their `desk-N` sink's loopback)
 - Page side: an AudioWorklet keeps ~80 ms buffered, skips back when
   lag passes 250 ms, reconnects every 1 s. X bells (`RFB`'s `bell`)
-  beep through it: only with 🔊 on. No PipeWire or `deskview.audio = false`: `api/audio` says why,
-  and 🔊 stays, disabled, with that as its tooltip. A browser on the
+  beep through it: only with 🔊 on. No PipeWire or `deskview.audio =
+  false` (`audioCheck`): `api/audio` says why, `audio/stream` is a 503
+  without a capture, and 🔊 stays, disabled, with that as its tooltip.
+  A browser on the
   same machine plays the stream into the default output again: a loop
 - Headless boxes: `examples/pipewire-null-sink.conf`, a virtual
   default output, so nothing plays out loud
 - `/files/`: `publish.root`, read-only, dot-names hidden in paths and
-  listings (`hideDots`)
+  listings (`hideDots`). Only directories are wrapped: a wrapped file
+  loses `Seek`, and with it Range requests (video seeking)
 
 ## demo
 
@@ -214,7 +264,10 @@ change to the tool and the skill by that.
     0.25 s gaps + tail 0.4 s, in whole frames (`sceneTiming`), so audio
     and video stay in step. Steps mix in at their starts (`amix`)
   - Clips: cut first (`cutClips`, before timing), then `mpdecimate`
-    drops idle frames (`decimate: false` keeps them), then `setpts`
+    drops idle frames (`decimate: false` keeps them; `decimateFilter`:
+    each change after its real gap, capped at one frame of the clip's
+    own rate (`probeRate`), so 10 or 60 fps play at their speed and an
+    idle stretch shrinks to a frame), then `setpts`
     speeds up to fit (`speedFor`, warns past 6x) or `tpad` holds the
     last frame. With nothing said a clip keeps every frame and lasts
     its (trimmed) cut (no `secs` to probe for). `audio: true` keeps its sound (and
@@ -225,8 +278,13 @@ change to the tool and the skill by that.
     inside speech move to the nearest pause (silencedetect, -35 dB,
     0.25 s+) within 3 s, an end finishing its phrase first, a start
     beginning it; a file whose last 0.1 s is loud (cut mid-speech) is
-    cut back to its last pause. Moves and misses are printed; moves
-    that cross keep the script's own cuts
+    cut back to its last pause. A move lands 3.25 s away at most (reach
+    plus 0.25 s into the pause), still in it: a long pause's far edge
+    would drop the picture between. Moves and misses are printed;
+    moves that cross keep the script's own cuts
+  - The audio stream's own end counts, not the file's (`listen`): a
+    recording's sound stops a few frames before its picture. Past it
+    is quiet, unless the sound ends loud; "last 0.1 s" is the audio's
   - Still edges (`still.go`), after the pause moves: a cut starts 0.5 s
     before its first change and ends 0.5 s after its last
     (`trimStill`); with sound kept, its first and last sounds count
@@ -235,8 +293,9 @@ change to the tool and the skill by that.
     cut. Trims of 0.1 s+ are printed
   - Dead air: the built video, previews too, is scanned once more
     (`mpdecimate` + silencedetect, ~1 s per minute); still and silent
-    1.5 s+ warns with its times and scene (`warnDeadAir`). Not cut:
-    what's left is a `secs` or a bug, and a cut would hide it
+    1.5 s+ warns with its times and scene (`warnDeadAir`; `sceneAt`
+    counts whole frames, as scene lengths are). Not cut: what's left
+    is a `secs` or a bug, and a cut would hide it
   - Slides past 40% of the video warn (`slideShare`): demos show the
     real thing; slides are accents
   - Zoom (`zoom.go`): a step's `zoom` [x, y, w, h] (a clip's pixels
@@ -268,7 +327,9 @@ change to the tool and the skill by that.
   - `term` (`term.go`): commands run once in one bash on a pty
     (`script(1)`, `stty` 102 cols, stdin closed, pagers off), split by
     random per-run markers; output's SGR colors kept (`parseANSI`),
-    CRLF a newline, the rest dropped. Scenes' sessions run in script
+    CRLF a newline, a lone `\r` or `ESC[G` starts the line over, the
+    rest dropped, each escape whole per ECMA-48 (`escape`: `ESC ( B`
+    in `sgr0`, DCS strings). Scenes' sessions run in script
     order, before any scene is drawn (`runSessions`). Then drawn:
     prompt as the demo zsh's, typing at 30 cps (capped to 40% of its
     step), output at once. One step per command, or one `say` for all.
@@ -300,8 +361,9 @@ change to the tool and the skill by that.
   hunks) first
   - Diffs: `git -c core.quotePath=false diff --src-prefix=a/
     --dst-prefix=b/`, so paths come plain whatever the config (paths
-    git still quotes are unquoted). `context` / `-U`: 3 unless set, 0
-    included
+    git still quotes are unquoted, and the tab git ends a `---`/`+++`
+    path holding a space with goes first). `context` / `-U`: 3 unless
+    set, 0 included
   - Characters JetBrains Mono lacks (emoji, CJK) draw as boxes: code
     and slide scenes warn, naming them (`warnGlyphs`); no font added
   - Overlays (fade, marks) are `color.NRGBA`: `color.RGBA` is
@@ -309,7 +371,9 @@ change to the tool and the skill by that.
   - `tree` (`--tree DIR`, `depth`, default 3): a file tree, drawn as
     numbered lines (`tree.go`), so lines, focus, marks and steps work
     as on code. In a repo it lists what git tracks or would (ignored
-    files out), else (or in a directory git ignores) every file off
+    files out, `ls-files -z`), as the worktree has it: files deleted
+    there left out, each once, a nested repository one directory line;
+    else (or in a directory git ignores) every file off
     dot-names, a symlinked DIR walked where it points; directories at
     the depth limit fold into one line with a file count
   - `split` (`--split`): a diff in two 640 px panes, old left, new right
@@ -353,14 +417,18 @@ change to the tool and the skill by that.
   program would be another `ttsEngine`, plus a `tts` key choosing it
   - `response_format: pcm`, the only format
   every provider takes (Gemini TTS refuses mp3). Rate and channels come
-  from `Content-Type` (`pcmInput`); ffmpeg decodes to a 48 kHz wav,
-  `atempo` speeds it up (pitch kept)
+  from `Content-Type` (`pcmInput`; no rate: 24 kHz, OpenAI's, warned
+  once per run: a server at its model's own rate plays fast or slow);
+  ffmpeg decodes to a 48 kHz wav, `atempo` speeds it up (pitch kept)
   - Cache: `$XDG_CACHE_HOME/demo-kit/tts/<sha256(engine, voice,
     text)>.wav`: rebuilds only pay for changed lines. The engine's
     `name` (`openaiTTS`: its URL) is in the key: servers share model
     names (`tts-1`, `alloy`) but not audio, and a receipt is always
-    its own engine's Beside each, a receipt `<same>.json`: its
+    its own engine's. Beside each, a receipt `<same>.json`: its
     generation ID, and its price once looked up
+  - A decoded line under 0.05 s (`checkSpeech`: an empty body, a JSON
+    error under `audio/pcm`) fails, naming what the server sent; no wav,
+    no receipt: a cached empty wav would fail every later build
   - Default voice (`defaultVoice`, from `tts.model`, `tts.voice`,
     `tts.instructions`, `tts.tempo`): `google/gemini-3.8-flash-tts`,
     `Umbriel`, brisk male instructions, tempo 1.2 (~18 chars/s); second
@@ -382,16 +450,21 @@ change to the tool and the skill by that.
     `checkVoice` (the API's answer: a bare 400). Other models' names
     pass through (Kokoro `am_michael`, Grok `Rex`, ElevenLabs `Liam`)
   - Key: the variable `tts.key_env` names (`OPENROUTER_API_KEY`), from
-    the environment or the `.env` beside the config (`config.Load`);
-    `""` sends none. A build asks (`ready`) only when a line isn't cached
+    the environment or the `.env` beside the config (`cfg.Secret`);
+    `""` sends none. A build asks (`ready`) only when a line isn't cached.
+    Term scenes run without that variable, the file's and a flag's
+    (`keyEnvs`, `termEnv`): `env` in one would draw the key into a
+    shared video
   - Cost: OpenRouter's `GET /generation?id=<X-Generation-Id>`, only
     when a response carries that header (else unpriced); 404 until
-    priced, any other error ends it. Priced a few seconds
-    late, so it polls for up to 30 s; ~$0.0017 per 7 s line. Kept in
-    the receipt. Build and `say --cost` print new spend and the cached
+    priced, any other error ends it. Priced a few seconds late, so a
+    line made in this run polls for up to 30 s; a cached unpriced one
+    asks once, quietly (another account's key, an expired generation
+    would cost every build 30 s). ~$0.0017 per 7 s line. Kept in the
+    receipt. Build and `say --cost` print new spend and the cached
     share (`billOf`): `tts $0.0042 new (3 lines), 9 cached ($0.0150)`,
-    plus `N unpriced` (lines cached before receipts, failed lookups,
-    which warn)
+    plus `N unpriced` (lines cached before receipts, failed lookups;
+    a new line's warns)
 - Needs `ffmpeg` (libass, libx264), `ffprobe`, `git`, the DejaVu Sans
   font (captions); `pw-play` optional. After a change: `go test
   ./...`, `./install.sh --no-deps --yes --only demo`

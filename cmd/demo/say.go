@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/keyclicker/demo-kit/internal/config"
 	"github.com/keyclicker/demo-kit/internal/paths"
@@ -103,6 +104,11 @@ func speak(ctx context.Context, e ttsEngine, v Voice,
 		return spoken{}, err
 	}
 
+	// An empty or error body may decode to an empty wav: never cache one
+	if err := checkSpeech(ctx, sp, f.Name()); err != nil {
+		return spoken{}, fmt.Errorf("speech for %q: %w", text, err)
+	}
+
 	// The receipt first: a cached wav always has one
 	if err := writeReceipt(wav, receipt{GenID: sp.GenID}); err != nil {
 		return spoken{}, err
@@ -170,6 +176,33 @@ func transcode(ctx context.Context, sp speech, tempo float64,
 	return ffmpeg(ctx, "", bytes.NewReader(sp.Audio), args...)
 }
 
+// minSpeech is the shortest wav a line may be: anything shorter is no
+// speech at all, and a cached one would fail every later build.
+const minSpeech = 0.05
+
+// checkSpeech fails when wav, sp decoded, is shorter than minSpeech,
+// saying what the server sent.
+func checkSpeech(ctx context.Context, sp speech, wav string) error {
+	secs, err := probeDuration(ctx, wav)
+	if err == nil && secs >= minSpeech {
+		return nil
+	}
+
+	sent := fmt.Sprintf("%d bytes", len(sp.Audio))
+	if body := bytes.TrimSpace(sp.Audio); isText(body) {
+		sent += fmt.Sprintf(" of text: %.200q", body) // a JSON error, say
+	}
+
+	return fmt.Errorf("no audio: the server sent %s", sent)
+}
+
+// isText reports whether b is non-empty UTF-8 without control bytes
+// other than newlines and tabs.
+func isText(b []byte) bool {
+	control := func(c byte) bool { return c < 0x20 && c != '\n' && c != '\t' }
+	return len(b) > 0 && utf8.Valid(b) && !slices.ContainsFunc(b, control)
+}
+
 // ---- demo say ----
 
 // cmdSay speaks text aloud on demo.sink, and saves it with -o.
@@ -201,7 +234,7 @@ func cmdSay(args []string) error {
 
 	ctx, stop := signalContext()
 	defer stop()
-	engine := newEngine(cfg.TTS)
+	engine := newEngine(cfg)
 
 	sp, err := speak(ctx, engine, defaultVoice, text)
 	if err != nil {
@@ -348,10 +381,10 @@ func writeReceipt(wav string, r receipt) error {
 var priceWait = 30 * time.Second
 
 // price is what wav cost when made, from its receipt, looked up (and
-// written into the receipt) the first time; false when unknown. The
-// receipt is e's: wavs are cached per engine.
-func price(ctx context.Context, e ttsEngine,
-	wav string) (float64, bool, error) {
+// written into the receipt) the first time, polling for up to wait;
+// false when unknown. The receipt is e's: wavs are cached per engine.
+func price(ctx context.Context, e ttsEngine, wav string,
+	wait time.Duration) (float64, bool, error) {
 
 	r, ok, err := readReceipt(wav)
 	switch {
@@ -367,7 +400,7 @@ func price(ctx context.Context, e ttsEngine,
 	if !ok {
 		return 0, false, nil
 	}
-	usd, ok, err := pricer.price(ctx, r.GenID, priceWait)
+	usd, ok, err := pricer.price(ctx, r.GenID, wait)
 	if err != nil || !ok {
 		return 0, false, err
 	}
@@ -395,8 +428,11 @@ func (b speechBill) String() string {
 	return s
 }
 
-// billOf prices lines in parallel. A failed lookup warns and leaves its
-// line unpriced: the bill still prints.
+// billOf prices lines in parallel. A line made in this run polls for
+// its price (priceWait), and a failed lookup warns; a cached one asks
+// once, quietly: one that never priced (another account's key, an
+// expired generation) would cost every build 30 s and a warning. Both
+// leave the line unpriced: the bill still prints.
 func billOf(ctx context.Context, e ttsEngine, lines []spoken) speechBill {
 	fresh := map[string]bool{}
 	for _, sp := range lines {
@@ -409,11 +445,15 @@ func billOf(ctx context.Context, e ttsEngine, lines []spoken) speechBill {
 
 	for wav, isNew := range fresh {
 		wg.Go(func() {
-			usd, ok, err := price(ctx, e, wav)
+			wait := time.Duration(0)
+			if isNew {
+				wait = priceWait
+			}
+			usd, ok, err := price(ctx, e, wav, wait)
 
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil {
+			if err != nil && isNew {
 				fmt.Fprintf(os.Stderr, "demo: tts cost: %v\n", err)
 			}
 

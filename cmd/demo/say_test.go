@@ -118,7 +118,7 @@ func TestTTSFlags(t *testing.T) {
 		t.Errorf("voice %+v, want %+v", defaultVoice, want)
 	}
 
-	engine := newEngine(cfg.TTS)
+	engine := newEngine(cfg)
 	if got := engine.name(); got != "openai http://127.0.0.1:8880/v1" {
 		t.Errorf("engine %q", got)
 	}
@@ -194,8 +194,49 @@ func TestSpeakWritesReceipt(t *testing.T) {
 	}
 }
 
+// An empty or error body under an audio type fails its line, says what
+// came, and leaves nothing in the cache: no wav, no receipt
+func TestSpeakRefusesEmptyAudio(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("no ffmpeg")
+	}
+
+	for name, body := range map[string]string{
+		"two bytes":  "\x00\x00",
+		"json error": `{"error":{"message":"quota exceeded"}}`,
+	} {
+		cache := t.TempDir()
+		t.Setenv("XDG_CACHE_HOME", cache)
+
+		srv := httptest.NewServer(http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Generation-Id", "gen-1")
+				w.Header().Set("Content-Type", "audio/pcm;rate=24000")
+				w.Write([]byte(body))
+			}))
+
+		_, err := speak(context.Background(), testEngine(srv.URL),
+			defaultVoice, "hi")
+		srv.Close()
+
+		if err == nil || !strings.Contains(err.Error(), "no audio") {
+			t.Errorf("%s: %v; want no audio", name, err)
+		}
+		if name == "json error" && !strings.Contains(err.Error(), "quota") {
+			t.Errorf("%s: %v; want the body", name, err)
+		}
+
+		left, _ := filepath.Glob(filepath.Join(cache, "demo-kit", "tts",
+			"*"))
+		if len(left) != 0 {
+			t.Errorf("%s: cached %q", name, left)
+		}
+	}
+}
+
 // The bill counts new and cached lines apart, each distinct line once,
-// prices a receipt once, and leaves failed lookups unpriced
+// prices a receipt once, and leaves failed lookups unpriced. A cached
+// unpriced line asks once, without polling
 func TestBillOf(t *testing.T) {
 	dir := t.TempDir()
 	lookups := map[string]int{}
@@ -216,7 +257,7 @@ func TestBillOf(t *testing.T) {
 	defer srv.Close()
 	tts := testEngine(srv.URL)
 	defer func(wait time.Duration) { priceWait = wait }(priceWait)
-	priceWait = 0
+	priceWait = time.Minute
 
 	line := func(name string, r *receipt) string {
 		wav := filepath.Join(dir, name+".wav")
@@ -234,8 +275,14 @@ func TestBillOf(t *testing.T) {
 	lost := line("lost", &receipt{GenID: "gen-lost"})
 
 	ctx := context.Background()
+	start := time.Now()
 	bill := billOf(ctx, tts, []spoken{{Wav: fresh, New: true},
 		{Wav: fresh}, {Wav: priced}, {Wav: old}, {Wav: lost}})
+	if took := time.Since(start); took > 10*time.Second ||
+		lookups["gen-lost"] != 1 {
+		t.Fatalf("cached unpriced line: %s, %d lookups; want one, at once",
+			took, lookups["gen-lost"])
+	}
 
 	want := speechBill{New: 1, NewUSD: 0.002, Cached: 3, CachedUSD: 0.003,
 		Unpriced: 2}

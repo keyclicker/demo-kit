@@ -93,3 +93,55 @@ func TestWarnDeadAir(t *testing.T) {
 		t.Fatalf("log %q", log.String())
 	}
 }
+
+// Past the audio's own end is quiet: a still tail after the sound
+// stops is trimmed, and a clip still and silent throughout is nothing.
+func TestTrimCutAudioEndsFirst(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		sources []string
+		cut     span
+		want    span
+		ok      bool
+	}{
+		{"still tail after the sound", []string{"testsrc=d=1:s=64x48:" +
+			"r=30,tpad=stop_mode=clone:stop_duration=3",
+			"sine=d=1,volume='if(gt(t,0.6),0,1)':eval=frame"},
+			span{0, 4}, span{0, 1.5}, true},
+		{"still and silent", []string{"testsrc=d=0.04:s=64x48:r=30," +
+			"tpad=stop_mode=clone:stop_duration=4",
+			"anullsrc=r=48000:cl=mono:d=3.8"}, span{0, 4.04},
+			span{0, 4.04}, false},
+	} {
+		clip := lavfiClip(t, tc.sources...)
+		var log strings.Builder
+		s := Scene{Clip: clip, Audio: true, num: 2}
+
+		got, err := trimCut(context.Background(), &log, s, tc.cut)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ok := !strings.Contains(log.String(), "nothing moves")
+		if ok != tc.ok || math.Abs(got.from-tc.want.from) > 0.1 ||
+			math.Abs(got.to-tc.want.to) > 0.1 {
+			t.Errorf("%s: cut %v, log %q; want %v, ok %v", tc.name, got,
+				log.String(), tc.want, tc.ok)
+		}
+	}
+}
+
+// A scene's first frame is its own, though float sums of lengths land
+// a hair past showinfo's 6-decimal time
+func TestSceneAt(t *testing.T) {
+	b := &builder{script: &Script{Scenes: []Scene{{num: 1}, {num: 2},
+		{num: 3}}}, timings: []timing{{Length: 0.1 + 0.2},
+		{Length: 0.7}, {Length: 1}}}
+
+	for at, want := range map[float64]int{0: 1, 0.266667: 1, 0.3: 2,
+		0.299999: 2, 0.966667: 2, 1.0: 3, 5: 3} {
+		if got := b.sceneAt(at).num; got != want {
+			t.Errorf("sceneAt(%g) = scene %d; want %d", at, got, want)
+		}
+	}
+}

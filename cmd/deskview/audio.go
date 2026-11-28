@@ -62,9 +62,16 @@ func (r *cmdReader) Close() error {
 }
 
 // streamHandler sends the live PCM until the client goes away. The
-// format travels in headers, so the page doesn't hardcode it.
+// format travels in headers, so the page doesn't hardcode it. No sound
+// (audioCheck, as api/audio reports it) is a 503, and no capture.
 func streamHandler(b *Broadcaster) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := audioCheck(); err != nil {
+			http.Error(w, "no sound: "+err.Error(),
+				http.StatusServiceUnavailable)
+			return
+		}
+
 		flush := http.NewResponseController(w)
 
 		h := w.Header()

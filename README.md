@@ -25,9 +25,11 @@ cd demo-kit
 `install.sh` asks before each step, and is safe to rerun:
 
 1. System packages with `sudo`: TigerVNC, xfwm4, ffmpeg, xdotool, scrot,
-   ImageMagick, PipeWire tools, Chromium, Go. Debian, Ubuntu, Fedora, RHEL,
-   Arch and their derivatives. Fedora and RHEL get ffmpeg from RPM Fusion;
-   Ubuntu gets Chromium from Flathub (no snap).
+   ImageMagick, PipeWire tools, Chromium, Go. Debian, Ubuntu, Fedora,
+   RHEL 9, Arch and their derivatives. Fedora and RHEL get ffmpeg from
+   RPM Fusion, RHEL also EPEL and CRB, but no scrot (screenshots use
+   ImageMagick's `import`); EL 10 lacks packages and is refused. Ubuntu
+   gets Chromium from Flathub (no snap).
 2. `go build` of `desk`, `demo` and `deskview` into `~/.local/bin`.
 3. A starter config, the `deskview` user service, and the skills linked
    into `~/.claude/skills` and `~/.codex/skills`.
@@ -57,8 +59,8 @@ agent-browser connect $P
 desk browser stop $P
 ```
 
-Sound: each display has its own sink, `desk-10` for `:10`. Start apps
-with `PULSE_SINK=desk-10` and their sound lands in its recording (and
+Sound: each display has its own sink, `desk-20` for `:20`. Start apps
+with `PULSE_SINK=desk-20` and their sound lands in its recording (and
 still plays on your output); `desk browser` does it for you.
 
 Watch: open `http://127.0.0.1:8737/` (deskview). Agent displays are
@@ -121,6 +123,7 @@ tempo = 1.2                             # speed-up, pitch kept (0.5-4)
 addr = "127.0.0.1:8737"
 audio = true
 audio_sink = ""                     # "" = the default output
+hosts = []                          # names a proxy serves it under
 
 [publish]
 root = "~/.local/share/demo-kit"    # deskview serves it at /files/
@@ -154,7 +157,9 @@ demo build --tts-url https://openrouter.ai/api/v1 \
 
 Secrets never go in the config: they come from the environment, or from
 `~/.config/demo-kit/.env` beside it (`KEY=VALUE` lines, `chmod 600`;
-the environment wins).
+the environment wins). `.env` values stay inside demo-kit: they never
+reach the programs it runs, and term scenes run without the TTS key's
+variable even when your shell exports it.
 
 ## Reaching deskview from elsewhere
 
@@ -168,7 +173,21 @@ tailscale serve --bg --set-path /desktops http://127.0.0.1:8737
 ```
 
 or an SSH tunnel: `ssh -L 8737:127.0.0.1:8737 host`. Every URL in the
-page is relative, so a path prefix works. Then set `publish.url` to the
+page is relative, so a path prefix works.
+
+deskview answers only requests for `localhost` or an IP address (any
+port), so a web page that rebinds its own name to your loopback can't
+read it. A proxy that passes on the public name, in `Host` as
+`tailscale serve` does or in `X-Forwarded-Host`, needs that name in
+`deskview.hosts`, else every request is a 403 naming the setting. List
+each name you open it under (a tailnet's short name is another one):
+
+```toml
+[deskview]
+hosts = ["box.tailnet-name.ts.net"]
+```
+
+An SSH tunnel needs nothing. Then set `publish.url` to the
 public URL of `/files/`, and `desk` and `demo` print links to their
 videos.
 
@@ -192,14 +211,14 @@ directory yourself.
 
 ## Troubleshooting
 
-- `desk new` fails: `journalctl --user -u desk-10` (the display number)
+- `desk new` fails: `journalctl --user -u desk-20` (the display number)
 - No GPU acceleration: `desk config video.render_node`; TigerVNC before
   1.14 has no `-rendernode` and falls back to software GL
 - Recordings use x264 on a GPU machine: VAAPI's test encode failed;
   `video.encoder = "vaapi"` shows why
 - `desk claim :0` refuses: the host runs Wayland; use `desk new`
-- A recording has no sound: `journalctl --user -u desk-rec-10` says
-  why; the app needs `PULSE_SINK=desk-10`
+- A recording has no sound: `journalctl --user -u desk-rec-20` says
+  why; the app needs `PULSE_SINK=desk-20`
 
 ## License
 

@@ -27,7 +27,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [debian:13, ubuntu:24.04, fedora:latest, archlinux:latest]
+        image: [debian:13, ubuntu:24.04, fedora:latest, rockylinux:9,
+          archlinux:latest]
     container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4

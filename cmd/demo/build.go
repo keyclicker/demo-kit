@@ -291,6 +291,17 @@ const (
 	maxSpeed = 6.0
 )
 
+// decimateFilter keeps only the frames where something changed
+// (mpdecimate), each after its real gap from the one before, capped at
+// one frame of the clip's own rate ("num/den", probeRate), then brings
+// them to the build's rate. So an idle stretch shrinks to one frame,
+// and a frame lasts what it did in the clip: counted as one of the
+// build's, a 60 fps clip would play at half speed, a 10 fps one triple.
+func decimateFilter(rate string) string {
+	return fmt.Sprintf("mpdecimate,setpts='if(eq(N,0),0,"+
+		"PREV_OUTPTS+min(PTS-PREV_INPTS,1/(%s)/TB))',fps=%d", rate, fps)
+}
+
 // timing places a scene's spoken steps: step k speaks from Starts[k]
 // to Ends[k], its picture takes over at Cuts[k] (Cuts[0] = 0), Length
 // is the whole scene.
@@ -660,7 +671,7 @@ func (b *builder) speak(ctx context.Context) error {
 
 	// Ready only when a line has to be bought: a cached build works
 	// without a key
-	b.tts = newEngine(cfg.TTS)
+	b.tts = newEngine(cfg)
 	if uncached(b.tts, scenes) {
 		if err := b.tts.ready(); err != nil {
 			return err
@@ -914,7 +925,11 @@ func (b *builder) clipScene(ctx context.Context, i int, s Scene, t timing,
 	// Pass 1: only frames where something changed, back to back
 	vf := b.fit
 	if s.decimate() {
-		vf = fmt.Sprintf("mpdecimate,setpts=N/%d/TB,%s", fps, b.fit)
+		rate, err := probeRate(ctx, s.Clip)
+		if err != nil {
+			return err
+		}
+		vf = decimateFilter(rate) + "," + b.fit
 	}
 	busy, busyWav := b.scenePath(i, "busy.mp4"), b.scenePath(i, "busy.wav")
 

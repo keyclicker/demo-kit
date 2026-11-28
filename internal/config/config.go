@@ -40,13 +40,16 @@
 //	addr = "127.0.0.1:8737"                     # listen address
 //	audio = true                                # stream sound to the page
 //	audio_sink = ""                             # sink to stream; "" = default
+//	hosts = []                                  # names it's proxied under
 //
 //	[publish]
 //	root = "~/.local/share/demo-kit"            # the dir served at url
 //	url = ""                                    # base URL; "" = no links
 //
 // Secrets never live here: they come from the environment, or from
-// .env beside this file (KEY=VALUE, chmod 600), which Load reads first.
+// .env beside this file (KEY=VALUE, chmod 600), which Load reads into
+// the Config, never into the environment: Config.Secret is the one way
+// to read one.
 package config
 
 import (
@@ -79,6 +82,10 @@ type Config struct {
 	TTS      TTS      `toml:"tts"`
 	Deskview Deskview `toml:"deskview"`
 	Publish  Publish  `toml:"publish"`
+
+	// secrets are .env's KEY=VALUEs, read by Secret. Unexported: never
+	// printed by `config`, never put into the process environment.
+	secrets map[string]string
 }
 
 // Desk configures desk's displays.
@@ -201,6 +208,14 @@ type Deskview struct {
 	// AudioSink is the sink whose monitor is streamed; "" is the default
 	// output.
 	AudioSink string `toml:"audio_sink"`
+
+	// Hosts are the host names, besides loopback's (localhost,
+	// 127.0.0.1, ::1), that requests may name in Host or
+	// X-Forwarded-Host: those of a proxy that passes its own on, as
+	// `tailscale serve` does (e.g. "box.tailnet.ts.net"). Any port; no
+	// scheme. Anything else is refused, so a site that rebinds its name
+	// to 127.0.0.1 can't read the page, the files or a display.
+	Hosts []string `toml:"hosts"`
 }
 
 // Publish maps local files to the URL they're reachable at. Serving them
@@ -221,6 +236,7 @@ var (
 	sizeRE    = regexp.MustCompile(`^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$`)
 	displayRE = regexp.MustCompile(`^:[0-9]+$`)
 	envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	hostRE    = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$`)
 )
 
 // ===== Loading =====
@@ -235,11 +251,12 @@ func Path() (string, error) {
 	return filepath.Join(dir, "config.toml"), nil
 }
 
-// Load reads the config file over the defaults, after putting .env into
-// the environment. A missing file is not an error; a malformed one, an
+// Load reads the config file over the defaults, and .env's secrets
+// (for Secret). A missing file is not an error; a malformed one, an
 // unknown key or a relative path is.
 func Load() (Config, error) {
-	if err := loadEnv(); err != nil {
+	secrets, err := readEnv()
+	if err != nil {
 		return Config{}, err
 	}
 
@@ -252,6 +269,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	c.secrets = secrets
 
 	meta, err := toml.DecodeFile(path, &c)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -326,8 +344,9 @@ func Defaults() (Config, error) {
 				"whispery, not intimate.",
 			Tempo: 1.2,
 		},
-		Deskview: Deskview{Addr: "127.0.0.1:8737", Audio: true},
-		Publish:  Publish{Root: data},
+		Deskview: Deskview{Addr: "127.0.0.1:8737", Audio: true,
+			Hosts: []string{}},
+		Publish: Publish{Root: data},
 	}, nil
 }
 
@@ -389,6 +408,13 @@ func (c *Config) resolve() error {
 
 	if _, _, err := net.SplitHostPort(c.Deskview.Addr); err != nil {
 		return fmt.Errorf("deskview.addr: %q: want host:port", c.Deskview.Addr)
+	}
+
+	for _, h := range c.Deskview.Hosts {
+		if !hostRE.MatchString(h) && net.ParseIP(h) == nil {
+			return fmt.Errorf("deskview.hosts: %q: want a host name or IP, "+
+				"no scheme or port, e.g. box.tailnet.ts.net", h)
+		}
 	}
 
 	if err := c.TTS.Check(); err != nil {
